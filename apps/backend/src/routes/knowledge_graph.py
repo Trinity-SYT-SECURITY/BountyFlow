@@ -13,6 +13,7 @@ from datetime import datetime
 from ..models.database import get_db
 from ..models.models import KnowledgeNode, KnowledgeEdge, Project
 from ..core.security import get_current_user_optional
+from ..middleware.auth import get_current_user
 from ..services.kg_extraction_service import kg_extraction_service
 from ..services.neo4j_kg_service import neo4j_kg_service
 from ..services.graph_rag_service import graph_rag_service
@@ -28,13 +29,17 @@ async def extract_kg_from_text(
     text: str,
     context: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Extract knowledge graph from arbitrary text
     Useful for processing external reports, notes, etc.
     """
     try:
+        project_result = await db.execute(select(Project).where(Project.id == project_id))
+        if not project_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
         if not kg_extraction_service.is_available():
             raise HTTPException(
                 status_code=503,
@@ -79,12 +84,16 @@ async def extract_kg_from_text(
 async def get_graph_analytics(
     project_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get advanced analytics for project knowledge graph
     """
     try:
+        project_result = await db.execute(select(Project).where(Project.id == project_id))
+        if not project_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
         analytics = {}
         
         # SQLite-based analytics
@@ -141,12 +150,16 @@ async def find_attack_path(
     target_entity: str,
     max_depth: int = 5,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Find paths between two entities (e.g., attack paths)
     """
     try:
+        project_result = await db.execute(select(Project).where(Project.id == project_id))
+        if not project_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
         if not neo4j_kg_service.is_available():
             raise HTTPException(
                 status_code=503,
@@ -179,12 +192,16 @@ async def query_graph_context(
     top_k: int = 5,
     depth: int = 2,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Query knowledge graph for relevant context using Graph RAG
     """
     try:
+        project_result = await db.execute(select(Project).where(Project.id == project_id))
+        if not project_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
         context = await graph_rag_service.retrieve_context_for_query(
             query=query,
             project_id=project_id,
@@ -211,12 +228,16 @@ async def query_graph_context(
 async def get_visualization_data(
     project_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get knowledge graph data formatted for visualization
     """
     try:
+        project_result = await db.execute(select(Project).where(Project.id == project_id))
+        if not project_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
         # Get all nodes
         nodes_result = await db.execute(
             select(KnowledgeNode).where(KnowledgeNode.project_id == project_id)
