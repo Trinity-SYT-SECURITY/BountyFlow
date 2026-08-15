@@ -8,10 +8,12 @@ services:
     ports:
       - "127.0.0.1:7474:7474"  # HTTP
       - "127.0.0.1:7687:7687"  # Bolt
-    # Reads NEO4J_PASSWORD from apps/backend/.env
-    # Change the password there if you want to use a different one
-    env_file:
-      - apps/backend/.env
+    # NOTE: do not use env_file here. apps/backend/.env legitimately contains
+    # NEO4J_URI / NEO4J_USERNAME for the backend, and Neo4j 5 reads any NEO4J_*
+    # variable as one of its own config settings — NEO4J_USERNAME becomes the
+    # unknown setting "USERNAME" and the container crash-loops on strict
+    # validation. Only NEO4J_AUTH is passed, interpolated from the same file by
+    # start-services.sh (or from your shell).
     environment:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-bountyflow123}
       - NEO4J_PLUGINS=["apoc"]

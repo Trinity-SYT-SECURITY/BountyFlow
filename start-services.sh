@@ -32,6 +32,15 @@ cd "$SCRIPT_DIR" || exit 1
 echo "📦 Starting services (Neo4j, Redis)..."
 echo ""
 
+# Keep one source of truth for the password: export it from the backend's .env
+# so compose can interpolate NEO4J_AUTH. The file is not handed to the container
+# directly — Neo4j would try to read NEO4J_USERNAME as a config setting and
+# refuse to start.
+if [ -f apps/backend/.env ]; then
+    NEO4J_PASSWORD=$(grep -E '^NEO4J_PASSWORD=' apps/backend/.env | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | xargs)
+    export NEO4J_PASSWORD
+fi
+
 # Start services
 $COMPOSE_CMD -f docker-compose.yml up -d
 
