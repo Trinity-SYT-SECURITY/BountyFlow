@@ -39,6 +39,7 @@ def get_current_user(current_user: dict = Depends(get_current_user_optional)):
 router = APIRouter()
 
 @router.get("/", response_model=List[ProjectResponse])
+@router.get("", response_model=List[ProjectResponse], include_in_schema=False)
 async def get_projects(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -52,6 +53,7 @@ async def get_projects(
     return projects
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_project(
     project_data: ProjectCreate,
     db: AsyncSession = Depends(get_db),

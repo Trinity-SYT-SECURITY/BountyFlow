@@ -179,3 +179,5 @@ __pycache__/
 other/
 .claude/
 demo/
+# browser-test screenshots
+tests/ui-screenshots/

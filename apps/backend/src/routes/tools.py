@@ -381,6 +381,7 @@ async def validate_and_get_tool(
         return None, False, f"Failed to create tool: {str(e)}"
 
 @router.get("/", response_model=List[ToolResponse])
+@router.get("", response_model=List[ToolResponse], include_in_schema=False)
 async def get_tools(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user_optional),
@@ -463,6 +464,7 @@ async def get_tools(
         return []
 
 @router.post("/", response_model=ToolResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ToolResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_tool(
     tool_data: ToolCreate,
     db: AsyncSession = Depends(get_db),
