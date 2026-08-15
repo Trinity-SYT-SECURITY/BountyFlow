@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: bountyflow-postgres
+    environment:
+      POSTGRES_DB: bountyflow
+      POSTGRES_USER: bountyflow
+      POSTGRES_PASSWORD: bountyflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bountyflow -d bountyflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: bountyflow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Neo4j for knowledge graph (optional)
+  neo4j:
+    image: neo4j:5-community
+    container_name: bountyflow-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/bountyflow
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  api:
+    build: .
+    container_name: bountyflow-api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://bountyflow:bountyflow@postgres:5432/bountyflow
+      SECRET_KEY: your-secret-key-here-change-in-production
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  neo4j_data:
+  neo4j_logs:
+
+

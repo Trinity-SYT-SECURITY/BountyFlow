@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # Neo4j for knowledge graph visualization
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: bountyflow-neo4j
+    ports:
+      - "127.0.0.1:7474:7474"  # HTTP
+      - "127.0.0.1:7687:7687"  # Bolt
+    # Reads NEO4J_PASSWORD from apps/backend/.env
+    # Change the password there if you want to use a different one
+    env_file:
+      - apps/backend/.env
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-bountyflow123}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - bountyflow-network
+
+  # Redis for caching and sessions (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: bountyflow-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bountyflow-network
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  neo4j_import:
+    driver: local
+  neo4j_plugins:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  bountyflow-network:
+    driver: bridge
