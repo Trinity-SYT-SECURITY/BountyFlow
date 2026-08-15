@@ -176,3 +176,6 @@ Thumbs.db
 *.temp
 __pycache__/
 *.pyc
+other/
+.claude/
+demo/

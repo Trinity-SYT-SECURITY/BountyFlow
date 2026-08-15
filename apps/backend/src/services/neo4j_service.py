@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 _graph_cache = {}
 _cache_ttl = 30  # Cache for 30 seconds
 
+
+def invalidate_graph_cache(project_id: int = None):
+    """Drop the cached graph so the next read reflects a write that just landed.
+
+    Called by kg_auto_sync after every node/edge mutation. Without it the graph
+    page can serve a snapshot up to _cache_ttl seconds stale, which looks exactly
+    like the edit never synced.
+    """
+    if project_id is None:
+        _graph_cache.clear()
+        return
+    _graph_cache.pop(f"kg_graph_{project_id}", None)
+
 class Neo4jService:
     def __init__(self, uri: str = None, user: str = None, password: str = None):
         # Ensure .env file is loaded

@@ -36,8 +36,17 @@ class LoginForm(BaseModel):
     username: str
     password: str
 
-class UserResponse(UserBase):
-    """Response schema for users"""
+class UserResponse(BaseModel):
+    """Response schema for users.
+
+    email is a plain str here on purpose: EmailStr is the right validator for
+    *input*, but re-validating on output turns stored-and-accepted addresses
+    into 500s — the built-in accounts use reserved TLDs such as
+    admin@bountyflow.local, which email-validator refuses.
+    """
+    username: str
+    email: str
+    full_name: Optional[str] = None
     id: int
     is_active: bool
     is_superuser: bool

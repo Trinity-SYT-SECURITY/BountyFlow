@@ -125,15 +125,41 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+def _require_auth_enabled() -> bool:
+    """REQUIRE_AUTH=true turns every 'optional' dependency into a hard one.
+
+    Most endpoints depend on get_current_user_optional, which means an
+    unauthenticated caller can read and write project data. That is convenient
+    for local development and wrong for anything reachable by other hosts, so
+    the strict behaviour is available behind an environment flag. Turn it on
+    once the frontend attaches its bearer token to every request.
+    """
+    return os.getenv("REQUIRE_AUTH", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
 def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))):
-    """Get current authenticated user (optional) - returns None if no token"""
+    """Get current authenticated user (optional) - returns anonymous if no token,
+    unless REQUIRE_AUTH is set, in which case a valid token is mandatory."""
+    strict = _require_auth_enabled()
     if credentials is None:
+        if strict:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return {"username": "anonymous", "user_id": None}
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         return {"username": username, "user_id": payload.get("user_id")}
     except (JWTError, Exception):
+        if strict:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         # If token is invalid, return anonymous user
         return {"username": "anonymous", "user_id": None}
 

@@ -17,10 +17,32 @@ from .neo4j_kg_service import neo4j_kg_service
 
 logger = logging.getLogger(__name__)
 
+
+def _invalidates_graph_cache(fn):
+    """Every sync_* below mutates the graph, so the cached copy the graph page
+    reads must be dropped — otherwise the page serves a snapshot up to the cache
+    TTL old and the edit looks like it never happened."""
+    import functools
+
+    @functools.wraps(fn)
+    async def wrapper(session, project_id, *args, **kwargs):
+        try:
+            return await fn(session, project_id, *args, **kwargs)
+        finally:
+            try:
+                from .neo4j_service import invalidate_graph_cache
+                invalidate_graph_cache(project_id)
+            except Exception as e:  # never let cache bookkeeping break a write
+                logger.warning(f"Could not invalidate graph cache for project {project_id}: {e}")
+
+    return wrapper
+
+
 class KnowledgeGraphAutoSync:
     """Auto-sync service for Knowledge Graph and global data"""
-    
+
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_target_created(session: AsyncSession, project_id: int, target: Target):
         """Sync newly created target to Knowledge Graph"""
         try:
@@ -52,6 +74,7 @@ class KnowledgeGraphAutoSync:
             return None
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_target_updated(session: AsyncSession, project_id: int, target: Target):
         """Sync updated target to Knowledge Graph"""
         try:
@@ -68,6 +91,9 @@ class KnowledgeGraphAutoSync:
             if target_kg_node:
                 # Update node data
                 target_kg_node.node_data.update({
+                    # 'name' is what the graph renders; without it a renamed
+                    # target keeps its old label forever
+                    'name': target.target_value,
                     'target_value': target.target_value,
                     'target_type': target.target_type,
                     'status': target.status,
@@ -102,6 +128,7 @@ class KnowledgeGraphAutoSync:
             logger.error(f"Failed to auto-sync target update to Knowledge Graph: {e}")
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_target_deleted(session: AsyncSession, project_id: int, target_id: int):
         """Sync deleted target to Knowledge Graph"""
         try:
@@ -138,6 +165,7 @@ class KnowledgeGraphAutoSync:
             logger.error(f"Failed to auto-sync target deletion from Knowledge Graph: {e}")
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_user_created(session: AsyncSession, project_id: int, user: DiscoveredUser):
         """Sync newly created user to Knowledge Graph and global pages"""
         try:
@@ -191,6 +219,7 @@ class KnowledgeGraphAutoSync:
             return None
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_user_updated(session: AsyncSession, project_id: int, user: DiscoveredUser):
         """Sync updated user to Knowledge Graph"""
         try:
@@ -254,6 +283,7 @@ class KnowledgeGraphAutoSync:
             logger.error(f"Failed to auto-sync user update to Knowledge Graph: {e}")
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_user_deleted(session: AsyncSession, project_id: int, user_id: int):
         """Sync deleted user to Knowledge Graph"""
         try:
@@ -302,6 +332,7 @@ class KnowledgeGraphAutoSync:
             traceback.print_exc()
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_finding_created(session: AsyncSession, project_id: int, finding: KnowledgeNode):
         """Sync newly created finding to Knowledge Graph"""
         try:
@@ -393,6 +424,7 @@ class KnowledgeGraphAutoSync:
             return None
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_file_created(session: AsyncSession, project_id: int, file: DiscoveredFile):
         """Sync newly created file to Knowledge Graph"""
         try:
@@ -630,6 +662,7 @@ class KnowledgeGraphAutoSync:
             logger.error(f"Failed to recreate user relationships: {e}")
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_file_updated(session: AsyncSession, project_id: int, file: DiscoveredFile):
         """Sync updated file to Knowledge Graph"""
         try:
@@ -771,6 +804,7 @@ class KnowledgeGraphAutoSync:
         except Exception as e:
             logger.error(f"Failed to auto-sync file update to Knowledge Graph: {e}")
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_file_deleted(session: AsyncSession, project_id: int, file_id: int):
         """Sync deleted file to Knowledge Graph"""
         try:
@@ -817,6 +851,7 @@ class KnowledgeGraphAutoSync:
             logger.error(f"Failed to auto-sync file {file_id} deletion from Knowledge Graph: {e}")
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_finding_updated(session: AsyncSession, project_id: int, finding: KnowledgeNode):
         """Sync updated finding to Knowledge Graph"""
         try:
@@ -874,6 +909,7 @@ class KnowledgeGraphAutoSync:
             logger.error(f"Failed to auto-sync finding update to Knowledge Graph: {e}")
     
     @staticmethod
+    @_invalidates_graph_cache
     async def sync_finding_deleted(session: AsyncSession, project_id: int, finding: KnowledgeNode):
         """Sync deleted finding to Knowledge Graph"""
         try:

@@ -21,13 +21,19 @@ from ..schemas.auth import (
     PasswordReset,
     LoginForm
 )
-from ..middleware.auth import create_access_token, verify_token
+from ..middleware.auth import create_access_token, verify_token, get_current_user_optional
 from ..utils.security import security_manager
 
 # Mock function for development
-def get_current_user():
-    """Mock function for development - returns a test user"""
-    return {"user_id": "test_user", "username": "test_user"}
+def get_current_user(current_user: dict = Depends(get_current_user_optional)):
+    """Resolve the caller from the bearer token.
+
+    This used to be a hardcoded stub returning test_user, which silently made
+    every endpoint in this module unauthenticated. It now delegates to the real
+    dependency: anonymous is still allowed by default so local development keeps
+    working, and setting REQUIRE_AUTH=true makes a valid token mandatory.
+    """
+    return current_user
 
 router = APIRouter()
 
@@ -161,24 +167,35 @@ async def login_user(
         }
     }
 
-@router.get("/auth/me", response_model=UserResponse)
+@router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
-    current_user: dict = Depends(verify_token)
+    current_user: dict = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get current user information"""
-    # In a real implementation, you'd fetch the full user object from database
-    # For now, return the token data
+    """Get current user information straight from the database.
+
+    The token only carries username/user_id, and UserResponse requires a real
+    email, so returning token data alone fails response validation.
+    """
+    from sqlalchemy import select
+    from ..models.models import User
+
+    result = await db.execute(select(User).where(User.username == current_user["username"]))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     return UserResponse(
-        id=current_user["user_id"],
-        username=current_user["username"],
-        email="",  # Would need to fetch from database
-        full_name="",
-        is_active=True,
-        is_superuser=False,
-        created_at=datetime.utcnow()
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        created_at=user.created_at
     )
 
-@router.post("/auth/password-reset-request")
+@router.post("/password-reset-request")
 async def request_password_reset(
     reset_request: PasswordResetRequest,
     background_tasks: BackgroundTasks,
@@ -203,7 +220,7 @@ async def request_password_reset(
     # Always return success to prevent email enumeration
     return {"message": "If the email exists, a password reset link has been sent"}
 
-@router.post("/auth/password-reset")
+@router.post("/password-reset")
 async def reset_password(
     reset_data: PasswordReset,
     db: AsyncSession = Depends(get_db)

@@ -535,58 +535,113 @@ async def create_tool(
         logger.error(f"Error creating tool: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/tools/{tool_id}", response_model=ToolResponse)
+async def _tool_response(db: AsyncSession, tool: Tool) -> ToolResponse:
+    """Shape a Tool row the way every tool endpoint returns it."""
+    project_name = None
+    if tool.project_id:
+        project_result = await db.execute(select(Project).where(Project.id == tool.project_id))
+        project = project_result.scalar_one_or_none()
+        project_name = project.name if project else None
+
+    created_by_int = None
+    if tool.created_by is not None:
+        if isinstance(tool.created_by, int):
+            created_by_int = tool.created_by
+        elif isinstance(tool.created_by, str):
+            try:
+                created_by_int = int(tool.created_by)
+            except ValueError:
+                user_result = await db.execute(select(User).where(User.username == tool.created_by))
+                user = user_result.scalar_one_or_none()
+                created_by_int = user.id if user else None
+
+    return ToolResponse(
+        id=tool.id,
+        name=tool.name,
+        description=tool.description or "",
+        category=tool.category or "general",
+        command_template=tool.command_template or "",
+        parameters=tool.parameters or {},
+        is_system_tool=tool.is_system_tool or False,
+        created_by=created_by_int,
+        created_at=tool.created_at,
+        project_id=tool.project_id,
+        project_name=project_name,
+        dependencies=[]
+    )
+
+
+@router.get("/{tool_id}", response_model=ToolResponse)
 async def get_tool(
     tool_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user_optional)
 ):
     """Get a specific tool by ID"""
-    # Mock implementation for development
-    return ToolResponse(
-        id=tool_id,
-        name="nmap",
-        description="Network mapper tool",
-        category="scanning",
-        command_template="nmap -sV {target}",
-        parameters={"target": {"type": "string", "required": True}},
-        is_system_tool=True,
-        created_by=None,
-        created_at=datetime.utcnow(),
-        dependencies=[]
-    )
+    result = await db.execute(select(Tool).where(Tool.id == tool_id))
+    tool = result.scalar_one_or_none()
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"Tool {tool_id} not found")
+    return await _tool_response(db, tool)
 
-@router.put("/tools/{tool_id}", response_model=ToolResponse)
+@router.put("/{tool_id}", response_model=ToolResponse)
 async def update_tool(
     tool_id: int,
     tool_data: ToolUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user_optional)
 ):
-    """Update a tool"""
-    # Mock implementation for development
-    return ToolResponse(
-        id=tool_id,
-        name=tool_data.name or "Updated Tool",
-        description=tool_data.description or "Updated description",
-        category=tool_data.category or "scanning",
-        command_template=tool_data.command_template or "nmap -sV {target}",
-        parameters=tool_data.parameters or {"target": {"type": "string", "required": True}},
-        is_system_tool=False,
-        created_by=1,
-        created_at=datetime.utcnow(),
-        dependencies=[]
-    )
+    """Update a tool. Only the fields present in the body are touched."""
+    try:
+        result = await db.execute(select(Tool).where(Tool.id == tool_id))
+        tool = result.scalar_one_or_none()
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool {tool_id} not found")
 
-@router.delete("/tools/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
+        updates = tool_data.model_dump(exclude_unset=True) if hasattr(tool_data, "model_dump") \
+            else tool_data.dict(exclude_unset=True)
+        for field, value in updates.items():
+            if value is None:
+                continue
+            if field == "category":
+                value = value.value if hasattr(value, "value") else str(value)
+            setattr(tool, field, value)
+
+        await db.commit()
+        await db.refresh(tool)
+        logger.info(f"Updated tool {tool_id}: {sorted(updates.keys())}")
+        return await _tool_response(db, tool)
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error updating tool {tool_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tool(
     tool_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user_optional)
 ):
-    """Delete a tool"""
-    # Mock implementation for development
-    return None
+    """Delete a tool. Executions keep their own copy of the command they ran."""
+    try:
+        result = await db.execute(select(Tool).where(Tool.id == tool_id))
+        tool = result.scalar_one_or_none()
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool {tool_id} not found")
+        if tool.is_system_tool:
+            raise HTTPException(status_code=403, detail="System tools cannot be deleted")
+        await db.delete(tool)
+        await db.commit()
+        logger.info(f"Deleted tool {tool_id}")
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error deleting tool {tool_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/executions/{execution_id}")
 async def get_tool_execution_details(

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from ..middleware.auth import get_current_user_optional
 from typing import Dict, Any, List
 from ..services.neo4j_service import neo4j_service
 import logging
@@ -6,9 +7,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Mock function for development
-def get_current_user():
-    """Mock function for development - returns a test user"""
-    return {"user_id": "test_user", "username": "test_user"}
+def get_current_user(current_user: dict = Depends(get_current_user_optional)):
+    """Resolve the caller from the bearer token.
+
+    This used to be a hardcoded stub returning test_user, which silently made
+    every endpoint in this module unauthenticated. It now delegates to the real
+    dependency: anonymous is still allowed by default so local development keeps
+    working, and setting REQUIRE_AUTH=true makes a valid token mandatory.
+    """
+    return current_user
 
 router = APIRouter()
 

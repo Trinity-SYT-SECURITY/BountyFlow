@@ -26,9 +26,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Mock function for development
-def get_current_user():
-    """Mock function for development - returns a test user"""
-    return {"user_id": "test_user", "username": "test_user"}
+def get_current_user(current_user: dict = Depends(get_current_user_optional)):
+    """Resolve the caller from the bearer token.
+
+    This used to be a hardcoded stub returning test_user, which silently made
+    every endpoint in this module unauthenticated. It now delegates to the real
+    dependency: anonymous is still allowed by default so local development keeps
+    working, and setting REQUIRE_AUTH=true makes a valid token mandatory.
+    """
+    return current_user
 
 router = APIRouter()
 
@@ -117,28 +123,67 @@ async def get_project(
 
     return project
 
-@router.put("/projects/{project_id}", response_model=ProjectResponse)
+@router.put("/{project_id}", response_model=ProjectResponse)
 async def update_project(
     project_id: int,
     project_data: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Update a project"""
-    # Mock implementation for development
-    return ProjectResponse(
-        id=project_id,
-        name=project_data.name or "Updated Project",
-        description=project_data.description or "Updated description",
-        company_name=project_data.company_name or "Updated Company",
-        target_scope={"in_scope": ["example.com"]},
-        out_of_scope={"out_of_scope": ["*.google.com"]},
-        status=project_data.status or "active",
-        created_by=1,
-        created_at=datetime.utcnow(),
-        targets=[],
-        users=[{"id": 1, "username": "test_user"}]
-    )
+    """Update a project. Only the fields present in the body are touched."""
+    try:
+        result = await db.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+
+        updates = project_data.model_dump(exclude_unset=True) if hasattr(project_data, "model_dump") \
+            else project_data.dict(exclude_unset=True)
+        for field, value in updates.items():
+            if value is None:
+                continue
+            if field == "status":
+                value = value.value if hasattr(value, "value") else str(value)
+            setattr(project, field, value)
+
+        await db.commit()
+        await db.refresh(project)
+        logger.info(f"Updated project {project_id}: {sorted(updates.keys())}")
+
+        targets_result = await db.execute(select(Target).where(Target.project_id == project_id))
+        targets = targets_result.scalars().all()
+
+        return ProjectResponse(
+            id=project.id,
+            name=project.name,
+            description=project.description or "",
+            company_name=project.company_name or "",
+            target_scope=project.target_scope or {},
+            out_of_scope=project.out_of_scope or {},
+            status=project.status,
+            created_by=project.created_by,
+            created_at=project.created_at,
+            targets=[
+                {
+                    "id": t.id,
+                    "project_id": t.project_id,
+                    "target_type": t.target_type,
+                    "target_value": t.target_value,
+                    "status": t.status,
+                    "priority": t.priority,
+                    "notes": t.notes,
+                    "created_at": t.created_at,
+                }
+                for t in targets
+            ],
+            users=[],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error updating project {project_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(
