@@ -171,7 +171,10 @@ async def chat_with_ai(request: ChatRequest):
             project_id=request.project_id,
             model_provider=request.model
         )
-        return {"response": response, "model_used": request.model or "gemini"}
+        # report the provider that actually answered, which may differ from the
+        # one requested if the request failed over
+        used = getattr(ai_service, "last_provider_used", None) or request.model or "gemini"
+        return {"response": response, "model_used": used}
 
     except HTTPException:
         raise

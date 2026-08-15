@@ -6,11 +6,16 @@ the repository root.
 ```
 tests/
   platform_e2e.py           API, sync and security checks (44)
+  crud_matrix.py            create/read/update/delete every entity (52)
   ui_smoke.js               browser-level checks — every page must render data (15)
+  capture_ui_reference.js   screenshots of the live UI, used by demo/
   scenarios/
     seed_scenarios.py       build small / medium / large engagements, then verify
   ui-screenshots/           written by `ui_smoke.js --shots` (gitignored)
 ```
+
+Run all four in this order: `crud_matrix` → `platform_e2e` → `scenarios` →
+`ui_smoke`. The first three need only Python; the last needs a local Chrome.
 
 All three take `--base`, so they run against localhost or a remote instance.
 
@@ -32,6 +37,20 @@ provider override, and a prompt-injection attempt that must not leak the system
 prompt. `--keep` leaves the scenario in the database.
 
 Exit code is the number of failed checks.
+
+## Every entity, every verb — `crud_matrix.py`
+
+```bash
+python tests/crud_matrix.py --base http://localhost:8002 --ai
+```
+
+Deliberately boring and exhaustive: for projects, targets, findings, discovered
+users, discovered files, tools, workflows, reports and scope it creates a row,
+reads it back, edits a field, reads it again, deletes it, and confirms it left
+both the listing **and** the knowledge graph. Nearly every bug found in this
+codebase has been an update or a delete that only touched one of those two.
+
+`--ai` additionally exercises chat, knowledge-graph analysis and recommendations.
 
 ## Browser — `ui_smoke.js`
 

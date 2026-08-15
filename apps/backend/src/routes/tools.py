@@ -634,6 +634,20 @@ async def delete_tool(
             raise HTTPException(status_code=404, detail=f"Tool {tool_id} not found")
         if tool.is_system_tool:
             raise HTTPException(status_code=403, detail="System tools cannot be deleted")
+
+        # tool_executions.tool_id is NOT NULL, so hard-deleting a tool that has
+        # already run raises an IntegrityError and the request 500s. Execution
+        # history is evidence and must survive, so a used tool is retired
+        # (is_active=False) and disappears from the active list instead.
+        used = await db.execute(
+            select(ToolExecution.id).where(ToolExecution.tool_id == tool_id).limit(1)
+        )
+        if used.scalar_one_or_none() is not None:
+            tool.is_active = False
+            await db.commit()
+            logger.info(f"Retired tool {tool_id} (kept: it has execution history)")
+            return None
+
         await db.delete(tool)
         await db.commit()
         logger.info(f"Deleted tool {tool_id}")

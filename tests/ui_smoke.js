@@ -57,7 +57,10 @@ function findChrome() {
 /* Each page: where to go, and a phrase that proves real data rendered.
    `empty` is the wording the page shows when it has nothing. */
 const PAGES = [
-  { name: 'dashboard', route: '/dashboard', expect: ['Dashboard Overview'] },
+  // assert real numbers, not just the heading: an expired session used to leave
+  // the tiles blank while the page still looked fine
+  { name: 'dashboard', route: '/dashboard', expect: ['Dashboard Overview'],
+    mustMatch: /Projects[\s\S]{0,80}Targets[\s\S]{0,80}Findings/ },
   { name: 'projects', route: '/projects', expect: ['Projects'], empty: ['No projects found'] },
   { name: 'targets', route: '/targets', expect: ['Targets'], empty: ['No targets found', 'No Targets Found'] },
   { name: 'findings', route: '/findings', expect: ['Findings'], empty: ['No findings found'] },
@@ -151,6 +154,7 @@ function record(name, ok, detail) {
       const missing = (p.expect || []).filter((t) => !body.includes(t));
       if (missing.length === (p.expect || []).length && (p.expect || []).length)
         problems.push(`page text missing all of: ${p.expect.join(' / ')}`);
+      if (p.mustMatch && !p.mustMatch.test(body)) problems.push('expected content did not render');
       const emptied = (p.empty || []).filter((t) => body.includes(t));
       if (emptied.length) problems.push(`shows empty state: "${emptied[0]}"`);
       if (/redirect=|\/login/.test(page.url())) problems.push(`bounced to ${page.url()}`);

@@ -30,6 +30,38 @@ def get_current_user(current_user: dict = Depends(get_current_user_optional)):
     return current_user
 
 router = APIRouter()
+
+
+async def _get_project_for_user(db: AsyncSession, project_id: int, current_user: dict) -> Project:
+    """Fetch a project the caller may touch.
+
+    The original check joined project_users, but nothing ever inserts the
+    creator into that table — so every scope endpoint returned 404 for every
+    project and the Scope Management page could not load or save anything.
+    Membership still grants access; so does having created the project.
+    """
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    user_id = (current_user or {}).get("user_id")
+    if user_id is None:
+        return project  # anonymous is only possible when REQUIRE_AUTH is off
+
+    if project.created_by == user_id:
+        return project
+
+    member = await db.execute(
+        select(Project.id).join(Project.users).where(
+            and_(Project.id == project_id, User.id == user_id)
+        )
+    )
+    if member.scalar_one_or_none() is not None:
+        return project
+
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this project")
+
 scope_manager = ScopeManager()
 
 @router.post("/projects/{project_id}/scope/validate", response_model=ScopeValidationResponse)
@@ -40,22 +72,7 @@ async def validate_target_scope(
     current_user: dict = Depends(verify_token)
 ):
     """Validate if a target is within project scope"""
-    # Check if project exists and user has access
-    query = select(Project).join(Project.users).where(
-        and_(
-            Project.id == project_id,
-            User.id == current_user["user_id"]
-        )
-    )
-
-    result = await db.execute(query)
-    project = result.scalar_one_or_none()
-
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found or access denied"
-        )
+    project = await _get_project_for_user(db, project_id, current_user)
 
     # Validate target against project scope
     validation_result = scope_manager.validate_target(
@@ -89,22 +106,7 @@ async def suggest_scope_adjustments(
     current_user: dict = Depends(verify_token)
 ):
     """Get suggestions for scope adjustments based on discovered targets"""
-    # Check if project exists and user has access
-    query = select(Project).join(Project.users).where(
-        and_(
-            Project.id == project_id,
-            User.id == current_user["user_id"]
-        )
-    )
-
-    result = await db.execute(query)
-    project = result.scalar_one_or_none()
-
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found or access denied"
-        )
+    project = await _get_project_for_user(db, project_id, current_user)
 
     targets = request_data.get("targets", [])
     all_suggestions = {
@@ -134,22 +136,7 @@ async def get_compliance_report(
     current_user: dict = Depends(verify_token)
 ):
     """Generate compliance report for project activities"""
-    # Check if project exists and user has access
-    query = select(Project).join(Project.users).where(
-        and_(
-            Project.id == project_id,
-            User.id == current_user["user_id"]
-        )
-    )
-
-    result = await db.execute(query)
-    project = result.scalar_one_or_none()
-
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found or access denied"
-        )
+    project = await _get_project_for_user(db, project_id, current_user)
 
     # Get recent activities for compliance report
     # TODO: Implement activity logging and retrieval
@@ -173,22 +160,7 @@ async def update_project_scope(
     current_user: dict = Depends(verify_token)
 ):
     """Update project scope definition"""
-    # Check if project exists and user has access
-    query = select(Project).join(Project.users).where(
-        and_(
-            Project.id == project_id,
-            User.id == current_user["user_id"]
-        )
-    )
-
-    result = await db.execute(query)
-    project = result.scalar_one_or_none()
-
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found or access denied"
-        )
+    project = await _get_project_for_user(db, project_id, current_user)
 
     # Update scope
     project.target_scope = scope_data.get("target_scope", {})

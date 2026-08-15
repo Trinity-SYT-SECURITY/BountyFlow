@@ -211,35 +211,82 @@ class AIService:
             logger.error(f"Error generating content: {e}")
             raise
 
+    @staticmethod
+    def _is_retryable_provider_error(exc: Exception) -> bool:
+        """Quota, rate-limit and transient upstream failures are worth retrying
+        on a different provider; a bad prompt or a bad key is not."""
+        text = str(exc).lower()
+        markers = (
+            "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
+            "overloaded", "503", "502", "504", "unavailable", "timeout",
+        )
+        return any(m in text for m in markers)
+
+    def configured_providers(self) -> List[str]:
+        """Providers that actually have a key, preferred one first."""
+        preferred = _get_active_provider()
+        available = []
+        if os.getenv("GEMINI_API_KEY"):
+            available.append("gemini")
+        if os.getenv("OPENAI_API_KEY"):
+            available.append("openai")
+        if os.getenv("ANTHROPIC_API_KEY"):
+            available.append("anthropic")
+        if preferred in available:
+            available.remove(preferred)
+            available.insert(0, preferred)
+        return available
+
+    async def _generate_with(self, prompt: str, active_provider: str) -> str:
+        if active_provider == "gemini":
+            if not self._ensure_initialized():
+                raise RuntimeError("Gemini API key not configured")
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, lambda: self._generate_content(prompt))
+        if active_provider == "openai":
+            return await self._call_openai(prompt)
+        if active_provider == "anthropic":
+            return await self._call_anthropic(prompt)
+        raise ValueError(f"Unknown AI provider: {active_provider}")
+
     async def generate_content_async(self, prompt: str, provider: Optional[str] = None) -> str:
         """
         Unified async content generation - routes to configured provider (Gemini, OpenAI, Anthropic).
-        Uses AI_PROVIDER env var, or falls back to first available provider.
+
+        If the chosen provider is rate-limited or temporarily unavailable and
+        another provider is configured, the request is retried there rather than
+        surfacing as a generic failure. A free-tier daily quota on one provider
+        should not take the assistant offline while another key is sitting in
+        .env doing nothing. Set AI_FAILOVER=false to keep the strict behaviour.
         """
-        active_provider = provider or _get_active_provider()
-        if not active_provider:
+        requested = provider or _get_active_provider()
+        if not requested:
             raise RuntimeError(
                 "No AI provider configured. Set GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY in .env"
             )
 
-        logger.info(f"Routing AI request to provider: {active_provider}")
+        failover = os.getenv("AI_FAILOVER", "true").strip().lower() in ("1", "true", "yes", "on")
+        order = [requested]
+        if failover:
+            order += [p for p in self.configured_providers() if p != requested]
 
-        if active_provider == "gemini":
-            if not self._ensure_initialized():
-                # Gemini client failed to init — try falling back to another provider
-                fallback = _get_active_provider()
-                if fallback and fallback != "gemini":
-                    logger.warning(f"Gemini init failed, falling back to {fallback}")
-                    return await self.generate_content_async(prompt, provider=fallback)
-                raise RuntimeError("Gemini API key not configured and no fallback provider available")
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, lambda: self._generate_content(prompt))
-        elif active_provider == "openai":
-            return await self._call_openai(prompt)
-        elif active_provider == "anthropic":
-            return await self._call_anthropic(prompt)
-        else:
-            raise ValueError(f"Unknown AI provider: {active_provider}")
+        last_error = None
+        for candidate in order:
+            try:
+                logger.info(f"Routing AI request to provider: {candidate}")
+                result = await self._generate_with(prompt, candidate)
+                self.last_provider_used = candidate
+                if candidate != requested:
+                    logger.warning(f"{requested} was unavailable; answered with {candidate}")
+                return result
+            except Exception as e:
+                last_error = e
+                if candidate is not order[-1] and self._is_retryable_provider_error(e):
+                    logger.warning(f"Provider {candidate} unavailable ({str(e)[:120]}), trying the next one")
+                    continue
+                raise
+
+        raise last_error if last_error else RuntimeError("No AI provider produced a response")
 
     async def generate_recommendations(self, project_id: int) -> List[Dict[str, Any]]:
         """
@@ -379,7 +426,19 @@ class AIService:
 
         except Exception as e:
             logger.error(f"AI chat with {provider} failed: {e}", exc_info=True)
-            return "Sorry, I encountered an error while processing your request. Please try again."
+            # Say what actually went wrong. "Sorry, I encountered an error" sent
+            # users hunting for a broken integration when the real cause was a
+            # provider quota they could see and fix in one minute.
+            if self._is_retryable_provider_error(e):
+                others = [p for p in self.configured_providers()
+                          if p != (provider or _get_active_provider())]
+                hint = (f" Another provider is configured ({', '.join(others)}) — "
+                        f"switch with the model selector.") if others else \
+                    " Add a second provider key in .env so requests can fail over."
+                return ("The AI provider is rate-limited or out of quota right now."
+                        + hint + " (Details are in the backend log.)")
+            return ("The AI request failed: "
+                    f"{str(e)[:200]}. Check the provider key and model name in .env.")
 
     async def _call_openai(self, prompt: str) -> str:
         """Call OpenAI API"""

@@ -336,11 +336,19 @@ async def delete_discovered_file(
         
         if not discovered_file:
             raise HTTPException(status_code=404, detail="Discovered file not found")
-        
+
+        # Drop the graph node and its edges first. Creation and update both sync,
+        # deletion did not, so removed files stayed in the graph forever.
+        try:
+            from ..services.kg_auto_sync import kg_auto_sync
+            await kg_auto_sync.sync_file_deleted(db, project_id, file_id)
+        except Exception as e:
+            logger.error(f"Failed to auto-sync file deletion to Knowledge Graph: {e}")
+
         # Delete the file
         await db.delete(discovered_file)
         await db.commit()
-        
+
         return {"message": "Discovered file deleted successfully"}
     except HTTPException:
         raise

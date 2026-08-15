@@ -197,6 +197,14 @@ async def delete_project(
     success = await simple_database_service.delete_project(project_id)
     if not success:
         raise HTTPException(status_code=404, detail="Project not found")
+    # The rows are gone, but the graph page reads through a cache that is only
+    # invalidated by kg_auto_sync — without this the deleted project's nodes keep
+    # being served until the TTL expires.
+    try:
+        from ..services.neo4j_service import invalidate_graph_cache
+        invalidate_graph_cache(project_id)
+    except Exception as e:
+        logger.warning(f"Could not invalidate graph cache for deleted project {project_id}: {e}")
     return None
 
 @router.post("/{project_id}/targets", response_model=TargetResponse, status_code=status.HTTP_201_CREATED)
@@ -304,7 +312,11 @@ async def add_finding(
         except Exception as e:
             logger.error(f"Failed to create audit log for finding: {e}")
 
-        return finding.node_data if hasattr(finding, 'node_data') else {"id": finding_id, "status": "created"}
+        # always hand back the id: the client needs it to edit or delete later
+        if hasattr(finding, 'node_data'):
+            return {**(finding.node_data or {}), "id": finding.id,
+                    "project_id": finding.project_id}
+        return {"id": finding_id, "status": "created"}
     except Exception as e:
         await db.rollback()
         logger.error(f"Error creating finding: {e}")
@@ -736,7 +748,11 @@ async def get_project_findings(
 ):
     """Get all findings for a project"""
     findings = await simple_database_service.get_project_findings(project_id)
-    return [finding.node_data for finding in findings]
+    # node_data alone has no identifier, so the UI had no way to address a
+    # finding for edit or delete even though those endpoints exist.
+    return [{**(f.node_data or {}), "id": f.id, "project_id": f.project_id,
+             "created_at": f.created_at.isoformat() if f.created_at else None}
+            for f in findings]
 
 @router.get("/{project_id}/tools", response_model=List[dict])
 async def get_project_tools(
