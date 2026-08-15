@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -11,6 +11,14 @@ export default function Login() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // apiClient sends expired sessions here; say so instead of leaving the user
+  // wondering why they were logged out mid-task
+  useEffect(() => {
+    if (router.isReady && router.query.expired) {
+      setError('Your session expired. Please sign in again.');
+    }
+  }, [router.isReady, router.query.expired]);
   const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e) => {

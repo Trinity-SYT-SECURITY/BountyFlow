@@ -50,13 +50,33 @@ function isOurApi(url) {
 }
 
 let installed = false;
+let redirecting = false;
+
+/** A token that has expired must send the user back to the login form.
+ *  Without this the pages just render their empty states and the platform
+ *  looks like it lost every project. Tokens last 30 minutes. */
+function handleExpiredSession(url) {
+  if (redirecting || typeof window === 'undefined') return;
+  if (typeof url === 'string' && url.includes('/auth/login')) return; // bad password, not expiry
+  redirecting = true;
+  try {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  } catch {
+    /* storage may be unavailable */
+  }
+  const here = window.location.pathname + window.location.search;
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = `/login?redirect=${encodeURIComponent(here)}&expired=1`;
+  }
+}
 
 /** Wrap window.fetch once, at app start. Safe to call repeatedly. */
 export function installApiClient() {
   if (installed || typeof window === 'undefined' || !window.fetch) return;
   const original = window.fetch.bind(window);
 
-  window.fetch = (input, init = {}) => {
+  window.fetch = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input && input.url;
     if (!isOurApi(url)) return original(input, init);
 
@@ -67,7 +87,9 @@ export function installApiClient() {
     if (nextInit.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     nextInit.headers = headers;
 
-    return original(normaliseUrl(url), nextInit);
+    const res = await original(normaliseUrl(url), nextInit);
+    if (res.status === 401) handleExpiredSession(url);
+    return res;
   };
 
   installed = true;
