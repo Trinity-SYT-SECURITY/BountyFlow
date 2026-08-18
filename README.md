@@ -2,7 +2,7 @@
 
 ## **Professional Penetration Testing Management Platform**
 
-![BountyFlow Platform](icon/plat.png)
+![BountyFlow Platform](icon/bountyflow-full.gif)
 
 BountyFlow is a comprehensive platform designed for penetration testers and cybersecurity researchers, providing complete test workflow management from target identification to report generation.
 
