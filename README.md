@@ -20,9 +20,9 @@ BountyFlow has been accepted for presentation at **three** international cyberse
 
 | Conference | Session | Topic |
 |------------|---------|-------|
-| **[Black Hat Arsenal](https://blackhat.com/sector/arsenal/schedule/index.html#bountyflow-an-automated-knowledge-graph-driven-penetration-testing-management-platform-54561)** (SecTor 2026) | Arsenal Tool Demo | BountyFlow: An Automated Knowledge Graph-Driven Penetration Testing Management Platform[reference:9] |
-| **[ROOTCON 20](https://www.rootcon.org/html/rc20/talks#ctrl-flow-esc-escaping-red-team-chaos)** | Track 1 Talk | *Ctrl + Flow + Esc: Escaping Red Team Chaos*[reference:10] |
-| **[.HACK 2026](https://dothack.io/session/tech02)** | TECH Session | AI-driven Red Team Operations: Overcoming Tool Fragmentation for Attack Chain Efficiency & Collaborative Insights[reference:11] |
+| **[Black Hat Arsenal](https://blackhat.com/sector/arsenal/schedule/index.html#bountyflow-an-automated-knowledge-graph-driven-penetration-testing-management-platform-54561)** (SecTor 2026) | Arsenal Tool Demo | BountyFlow: An Automated Knowledge Graph-Driven Penetration Testing Management Platform |
+| **[ROOTCON 20](https://www.rootcon.org/html/rc20/talks#ctrl-flow-esc-escaping-red-team-chaos)** | Track 1 Talk | *Ctrl + Flow + Esc: Escaping Red Team Chaos* |
+| **[.HACK 2026](https://dothack.io/session/tech02)** | TECH Session | AI-driven Red Team Operations: Overcoming Tool Fragmentation for Attack Chain Efficiency & Collaborative Insights |
 
 
 
