@@ -13,28 +13,19 @@ import logging
 
 from ...models.database import get_db
 from ...models.models import User, Project, Target, KnowledgeNode, AuditLog, ToolExecution, DiscoveredFile, DiscoveredUser
-from ...middleware.auth import get_current_user_optional
+from ...middleware.auth import get_current_user_optional, require_admin
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-async def require_admin(current_user: dict = Depends(get_current_user_optional), db: AsyncSession = Depends(get_db)):
-    """Middleware to require admin privileges"""
-    if not current_user or current_user.get("username") == "anonymous":
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required"
-        )
-    # Check if user is admin (for now, allow all authenticated users)
-    # TODO: Implement proper admin role checking
-    return current_user
 
 
 @router.get("/stats")
 async def get_dashboard_stats(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user_optional),
+    _admin=Depends(require_admin),
 ):
     """
     Get platform statistics for admin dashboard
@@ -126,7 +117,8 @@ async def get_dashboard_stats(
 async def get_activity_feed(
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user_optional),
+    _admin=Depends(require_admin),
 ):
     """
     Get recent activity feed for admin dashboard
@@ -181,7 +173,8 @@ async def get_activity_feed(
 @router.get("/user-stats")
 async def get_user_statistics(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user_optional),
+    _admin=Depends(require_admin),
 ):
     """
     Get per-user statistics
@@ -248,7 +241,8 @@ async def get_user_statistics(
 @router.get("/system-alerts")
 async def get_system_alerts(
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user_optional)
+    current_user: dict = Depends(get_current_user_optional),
+    _admin=Depends(require_admin),
 ):
     """
     Get system alerts and warnings

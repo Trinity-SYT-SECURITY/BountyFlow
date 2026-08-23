@@ -167,7 +167,27 @@ def get_current_user(current_user: dict = Depends(verify_token)):
     """Get current authenticated user"""
     return current_user
 
-def require_admin(current_user: dict = Depends(get_current_user)):
-    """Require admin privileges"""
-    # TODO: Implement admin role checking
-    return current_user
+async def require_admin(current_user: dict = Depends(get_current_user)):
+    """Require the caller to be a superuser.
+
+    get_current_user only decodes the JWT, so what it returns is a dict with
+    the username and id in it — not a User row. Every admin router used to
+    declare its own require_admin that read .is_superuser straight off that
+    dict, which is an AttributeError, which is a 500 on every admin request.
+    So the check has to load the row.
+    """
+    from sqlalchemy import select
+    from ..models.database import async_session
+    from ..models.models import User
+
+    user_id = current_user.get("user_id")
+    username = current_user.get("username")
+    async with async_session() as db:
+        query = select(User).where(
+            User.id == user_id if user_id is not None else User.username == username
+        )
+        user = (await db.execute(query)).scalar_one_or_none()
+
+    if user is None or not user.is_superuser:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user

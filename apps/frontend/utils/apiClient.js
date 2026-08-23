@@ -84,7 +84,13 @@ export function installApiClient() {
     const headers = new Headers(nextInit.headers || (typeof input !== 'string' ? input.headers : undefined));
     const token = getToken();
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
-    if (nextInit.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    // Only a string body is JSON. FormData and URLSearchParams carry their own
+    // content type (multipart with a boundary, or urlencoded) and the browser
+    // sets it — stamping application/json on them broke report generation,
+    // which posts a FormData.
+    if (typeof nextInit.body === 'string' && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
     nextInit.headers = headers;
 
     const res = await original(normaliseUrl(url), nextInit);

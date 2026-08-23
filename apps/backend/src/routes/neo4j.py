@@ -252,8 +252,10 @@ async def create_relationship(
 ):
     """Create relationship between nodes"""
     try:
-        neo4j_service.create_relationship(project_id, from_node, to_node, relationship_type, properties)
+        await neo4j_service.create_relationship(project_id, from_node, to_node, relationship_type, properties)
         return {"message": "Relationship created successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create relationship: {e}")
         raise HTTPException(status_code=500, detail="Failed to create relationship")
@@ -262,7 +264,7 @@ async def create_relationship(
 async def get_attack_paths(project_id: int, current_user: dict = Depends(get_current_user)):
     """Get attack paths"""
     try:
-        paths = neo4j_service.get_attack_paths(project_id)
+        paths = await neo4j_service.get_attack_paths(project_id)
         return {"attack_paths": paths}
     except Exception as e:
         logger.error(f"Failed to get attack paths: {e}")
@@ -272,7 +274,7 @@ async def get_attack_paths(project_id: int, current_user: dict = Depends(get_cur
 async def get_critical_nodes(project_id: int, current_user: dict = Depends(get_current_user)):
     """Get critical nodes"""
     try:
-        nodes = neo4j_service.get_critical_nodes(project_id)
+        nodes = await neo4j_service.get_critical_nodes(project_id)
         return {"critical_nodes": nodes}
     except Exception as e:
         logger.error(f"Failed to get critical nodes: {e}")
@@ -288,8 +290,12 @@ async def update_node_position(
 ):
     """Update node position"""
     try:
-        neo4j_service.update_node_position(project_id, node_id, x, y)
+        await neo4j_service.update_node_position(project_id, node_id, x, y)
         return {"message": "Node position updated successfully"}
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Node not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to update node position: {e}")
         raise HTTPException(status_code=500, detail="Failed to update node position")
@@ -298,26 +304,16 @@ async def update_node_position(
 async def delete_node(project_id: int, node_id: str, current_user: dict = Depends(get_current_user)):
     """Delete node"""
     try:
-        neo4j_service.delete_node(project_id, node_id)
+        await neo4j_service.delete_node(project_id, node_id)
         return {"message": "Node deleted successfully"}
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Node not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to delete node: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete node")
 
-@router.post("/graph/{project_id}/query")
-async def execute_cypher_query(
-    project_id: int,
-    query_data: Dict[str, str],
-    current_user: dict = Depends(get_current_user)
-):
-    """Execute Cypher query"""
-    try:
-        query = query_data.get("query", "")
-        result = neo4j_service.execute_cypher_query(project_id, query)
-        return result
-    except Exception as e:
-        logger.error(f"Failed to execute Cypher query: {e}")
-        raise HTTPException(status_code=500, detail="Failed to execute Cypher query")
 
 @router.post("/graph/{project_id}/init")
 async def initialize_project_graph(project_id: int, project_name: str, current_user: dict = Depends(get_current_user)):

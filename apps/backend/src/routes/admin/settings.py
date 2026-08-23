@@ -14,21 +14,13 @@ import json
 
 from ...models.database import get_db
 from ...models.models import User, AuditLog
-from ...middleware.auth import get_current_user
+from ...middleware.auth import require_admin
 from datetime import datetime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def require_admin(current_user: User = Depends(get_current_user)):
-    """Middleware to require admin privileges"""
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access required"
-        )
-    return current_user
 
 
 # Pydantic models

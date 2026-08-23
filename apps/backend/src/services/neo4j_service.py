@@ -374,6 +374,176 @@ class Neo4jService:
                 'totalRelationships': 0
             }
     
+    # ---------------------------------------------------------------- mutations
+    # The graph the UI shows comes from the knowledge_nodes / knowledge_edges
+    # tables (see get_project_graph_from_db), so the write side works on those
+    # too. Node ids on the wire are "<node_type>_<row id>", the same shape the
+    # read side emits.
+
+    @staticmethod
+    def _split_node_id(node_id: str):
+        """"target_12" -> ("target", 12). Returns (None, None) if it is not one."""
+        if not isinstance(node_id, str) or "_" not in node_id:
+            return None, None
+        node_type, _, raw = node_id.rpartition("_")
+        try:
+            return node_type, int(raw)
+        except ValueError:
+            return None, None
+
+    async def create_relationship(self, project_id: int, from_node: str, to_node: str,
+                                  relationship_type: str, properties: Dict[str, Any] = None):
+        """Link two existing nodes. Re-linking the same pair is a no-op."""
+        from ..models.database import async_session
+        from ..models.models import KnowledgeEdge, KnowledgeNode
+        from sqlalchemy import select
+
+        _, src = self._split_node_id(from_node)
+        _, dst = self._split_node_id(to_node)
+        if src is None or dst is None:
+            raise ValueError("unrecognised node id: %s -> %s" % (from_node, to_node))
+
+        async with async_session() as db:
+            rows = (await db.execute(
+                select(KnowledgeNode.id).where(
+                    KnowledgeNode.project_id == project_id,
+                    KnowledgeNode.id.in_([src, dst]))
+            )).scalars().all()
+            if set(rows) != {src, dst}:
+                raise ValueError("both nodes must exist in this project")
+
+            existing = (await db.execute(
+                select(KnowledgeEdge).where(
+                    KnowledgeEdge.project_id == project_id,
+                    KnowledgeEdge.source_node_id == src,
+                    KnowledgeEdge.target_node_id == dst,
+                    KnowledgeEdge.edge_type == relationship_type)
+            )).scalar_one_or_none()
+            if existing is None:
+                db.add(KnowledgeEdge(
+                    project_id=project_id, source_node_id=src, target_node_id=dst,
+                    edge_type=relationship_type, edge_data=properties or {}))
+                await db.commit()
+
+        invalidate_graph_cache(project_id)
+
+    async def delete_node(self, project_id: int, node_id: str):
+        """Delete a node and every edge that touched it."""
+        from ..models.database import async_session
+        from ..models.models import KnowledgeEdge, KnowledgeNode
+        from sqlalchemy import delete, or_, select
+
+        _, row_id = self._split_node_id(node_id)
+        if row_id is None:
+            raise ValueError("unrecognised node id: %s" % node_id)
+
+        async with async_session() as db:
+            node = (await db.execute(
+                select(KnowledgeNode).where(KnowledgeNode.project_id == project_id,
+                                            KnowledgeNode.id == row_id)
+            )).scalar_one_or_none()
+            if node is None:
+                raise LookupError(node_id)
+            await db.execute(delete(KnowledgeEdge).where(
+                KnowledgeEdge.project_id == project_id,
+                or_(KnowledgeEdge.source_node_id == row_id,
+                    KnowledgeEdge.target_node_id == row_id)))
+            await db.delete(node)
+            await db.commit()
+
+        invalidate_graph_cache(project_id)
+
+    async def update_node_position(self, project_id: int, node_id: str, x: float, y: float):
+        """Remember where the user dragged a node to."""
+        from ..models.database import async_session
+        from ..models.models import KnowledgeNode
+        from sqlalchemy import select
+
+        _, row_id = self._split_node_id(node_id)
+        if row_id is None:
+            raise ValueError("unrecognised node id: %s" % node_id)
+
+        async with async_session() as db:
+            node = (await db.execute(
+                select(KnowledgeNode).where(KnowledgeNode.project_id == project_id,
+                                            KnowledgeNode.id == row_id)
+            )).scalar_one_or_none()
+            if node is None:
+                raise LookupError(node_id)
+            data = dict(node.node_data or {})
+            data["x"], data["y"] = x, y
+            node.node_data = data  # reassign: JSON columns do not track mutation
+            await db.commit()
+
+        invalidate_graph_cache(project_id)
+
+    # ---------------------------------------------------------------- analysis
+
+    async def get_attack_paths(self, project_id: int) -> List[Dict[str, Any]]:
+        """Walk the edges out of every target and return the routes to a finding.
+
+        Depth is capped at 4 hops: past that the paths stop being something a
+        person reads off a screen, and a dense graph explodes the count.
+        """
+        graph = await self.get_project_graph_from_db(project_id)
+        by_id = {n["id"]: n for n in graph["nodes"]}
+        out_edges: Dict[str, List[Dict[str, Any]]] = {}
+        for rel in graph["relationships"]:
+            out_edges.setdefault(rel["from"], []).append(rel)
+
+        paths: List[Dict[str, Any]] = []
+
+        def walk(node_id, trail, edge_types, seen):
+            if len(trail) > 5:
+                return
+            node = by_id.get(node_id)
+            if node and node["type"].lower() == "finding" and len(trail) > 1:
+                paths.append({
+                    "nodes": [{"id": i, "label": by_id[i]["label"], "type": by_id[i]["type"]}
+                              for i in trail if i in by_id],
+                    "relationships": edge_types,
+                    "length": len(trail) - 1,
+                    "severity": (node.get("properties") or {}).get("severity"),
+                })
+                return
+            for rel in out_edges.get(node_id, []):
+                if rel["to"] in seen:
+                    continue
+                walk(rel["to"], trail + [rel["to"]], edge_types + [rel["type"]],
+                     seen | {rel["to"]})
+
+        for node in graph["nodes"]:
+            if node["type"].lower() == "target":
+                walk(node["id"], [node["id"]], [], {node["id"]})
+
+        paths.sort(key=lambda p: (-len(p["nodes"]), p["length"]))
+        return paths[:100]
+
+    async def get_critical_nodes(self, project_id: int) -> List[Dict[str, Any]]:
+        """Rank nodes by how connected they are, findings weighted by severity."""
+        graph = await self.get_project_graph_from_db(project_id)
+        degree: Dict[str, int] = {}
+        for rel in graph["relationships"]:
+            degree[rel["from"]] = degree.get(rel["from"], 0) + 1
+            degree[rel["to"]] = degree.get(rel["to"], 0) + 1
+
+        weights = {"critical": 4.0, "high": 3.0, "medium": 2.0, "low": 1.0, "info": 0.5}
+        ranked = []
+        for node in graph["nodes"]:
+            props = node.get("properties") or {}
+            severity = str(props.get("severity", "")).lower()
+            score = degree.get(node["id"], 0) + weights.get(severity, 0.0)
+            if score <= 0:
+                continue
+            ranked.append({
+                "id": node["id"], "label": node["label"], "type": node["type"],
+                "connections": degree.get(node["id"], 0),
+                "severity": props.get("severity"),
+                "score": round(score, 2),
+            })
+        ranked.sort(key=lambda n: -n["score"])
+        return ranked[:25]
+
     def get_project_graph(self, project_id: int) -> Dict[str, Any]:
         """Get complete graph data for project"""
         # First try to get from SQLAlchemy database

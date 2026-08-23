@@ -352,6 +352,112 @@ def suite_security(pid, tids):
     check("unknown execution id 404s rather than 500s", st in (403, 404), f"status={st}")
 
 
+ADMIN_ENDPOINTS = [
+    "/admin/users?limit=5",
+    "/admin/projects?limit=5",
+    "/admin/settings/system",
+    "/admin/settings/security",
+    "/admin/audit-logs?days=7&limit=5",
+    "/admin/audit-logs/statistics?days=7",
+    "/admin/dashboard/stats",
+    "/admin/dashboard/activity-feed?limit=5",
+    "/admin/dashboard/system-alerts",
+]
+
+
+def suite_admin():
+    """The admin console: a superuser gets data, a normal user gets 403.
+
+    Every admin router used to declare its own require_admin that read
+    .is_superuser off the dict get_current_user returns, so each of these was a
+    500 for everybody, and the ones under /admin/dashboard let any logged-in
+    user through.
+    """
+    section("Admin console: authz and availability")
+    st, r = call("POST", "/auth/login",
+                 {"username": "admin", "password": "admin123!"}, token=False)
+    admin_token = r.get("access_token") if isinstance(r, dict) else None
+    check("superuser can log in", st == 200 and admin_token, f"status={st}")
+    if not admin_token:
+        return
+
+    user_token = TOKEN
+    for path in ADMIN_ENDPOINTS:
+        globals()["TOKEN"] = admin_token
+        st_admin, body = call("GET", path)
+        globals()["TOKEN"] = user_token
+        st_user, _ = call("GET", path)
+        check(f"GET {path.split('?')[0]}",
+              st_admin == 200 and st_user == 403,
+              f"admin={st_admin} ({str(body)[:80]}) non-admin={st_user}")
+
+    globals()["TOKEN"] = user_token
+
+
+def suite_neo4j(pid):
+    """The graph endpoints behind /knowledge-graph and /neo4j-graph.
+
+    create_relationship, delete_node, update_node_position, get_attack_paths
+    and get_critical_nodes were all called by routes but never existed on the
+    service, so each of these was an unconditional 500.
+    """
+    section("Graph service: relationships, layout, analysis")
+    st, g = call("GET", f"/neo4j/graph/{pid}")
+    nodes = g.get("nodes", []) if isinstance(g, dict) else []
+    check("GET /neo4j/graph/{id} returns this project's nodes", st == 200 and nodes,
+          f"status={st} nodes={len(nodes)}")
+    if not nodes:
+        return
+
+    targets = [n for n in nodes if str(n.get("type", "")).lower() == "target"]
+    findings = [n for n in nodes if str(n.get("type", "")).lower() == "finding"]
+
+    if targets and findings:
+        src, dst = targets[0]["id"], findings[0]["id"]
+        st, _ = call("POST", f"/neo4j/graph/{pid}/relationship"
+                             f"?from_node={urllib.parse.quote(src)}"
+                             f"&to_node={urllib.parse.quote(dst)}"
+                             f"&relationship_type=exploits")
+        check("POST a relationship between two nodes", st in (200, 201), f"status={st}")
+
+        st, g2 = call("GET", f"/neo4j/graph/{pid}?force_refresh=true")
+        rels = g2.get("relationships", []) if isinstance(g2, dict) else []
+        check("the new relationship is in the graph",
+              any(r.get("from") == src and r.get("to") == dst and r.get("type") == "exploits"
+                  for r in rels),
+              f"{len(rels)} relationships, none matching {src}->{dst}")
+
+    st, _ = call("POST", f"/neo4j/graph/{pid}/relationship"
+                         f"?from_node=not_a_node&to_node={urllib.parse.quote(nodes[0]['id'])}"
+                         f"&relationship_type=exploits")
+    check("a relationship to a nonexistent node is rejected, not a 500",
+          st in (400, 404), f"status={st}")
+
+    st, paths = call("GET", f"/neo4j/graph/{pid}/attack-paths")
+    check("GET attack-paths", st == 200 and isinstance(paths, dict)
+          and isinstance(paths.get("attack_paths"), list),
+          f"status={st} body={str(paths)[:120]}")
+
+    st, crit = call("GET", f"/neo4j/graph/{pid}/critical-nodes")
+    listing = crit.get("critical_nodes") if isinstance(crit, dict) else None
+    check("GET critical-nodes ranks the graph", st == 200 and isinstance(listing, list)
+          and listing, f"status={st} body={str(crit)[:120]}")
+
+    victim = nodes[-1]["id"]
+    st, _ = call("PUT", f"/neo4j/graph/{pid}/node/{urllib.parse.quote(victim)}/position?x=42&y=99")
+    check("PUT a node position", st == 200, f"status={st}")
+
+    st, _ = call("DELETE", f"/neo4j/graph/{pid}/node/{urllib.parse.quote(victim)}")
+    check("DELETE a node", st == 200, f"status={st}")
+
+    st, g3 = call("GET", f"/neo4j/graph/{pid}?force_refresh=true")
+    still_there = any(n.get("id") == victim for n in (g3.get("nodes", []) if isinstance(g3, dict) else []))
+    check("the deleted node is gone from the graph", not still_there, f"{victim} still present")
+
+    st, _ = call("DELETE", f"/neo4j/graph/{pid}/node/{urllib.parse.quote(victim)}")
+    check("deleting it twice 404s rather than 500s", st == 404, f"status={st}")
+
+
 def suite_ai(pid):
     section("AI service")
     st, m = call("GET", "/ai/models")
@@ -421,6 +527,8 @@ def main():
     suite_tools(pid)
     suite_dashboard(pid)
     suite_security(pid, tids)
+    suite_admin()
+    suite_neo4j(pid)
     if args.ai:
         suite_ai(pid)
     suite_cleanup(pid, args.keep)
