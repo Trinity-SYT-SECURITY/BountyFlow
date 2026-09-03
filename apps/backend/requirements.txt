@@ -39,3 +39,8 @@ structlog
 # Utilities
 python-dateutil==2.8.2
 typing-extensions>=4.8.0
+
+# Report export: HTML rendering and PDF generation. Both export formats are
+# advertised in the UI and both 500 without these.
+markdown>=3.5
+weasyprint>=60.0

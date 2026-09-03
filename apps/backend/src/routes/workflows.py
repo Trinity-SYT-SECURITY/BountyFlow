@@ -21,7 +21,9 @@ class WorkflowBase(BaseModel):
     status: str = "active"
 
 class WorkflowResponse(BaseModel):
-    id: str
+    # int, not str: the execution history returns workflow_id as an int, and
+    # every consumer had to compare the two loosely.
+    id: int
     name: str
     description: Optional[str] = ""
     tools: Optional[Dict[str, Any]] = {}
@@ -132,7 +134,7 @@ async def get_workflows(
                             tools_data = {}
                 
                 workflow_list.append(WorkflowResponse(
-                    id=str(workflow.id),
+                    id=workflow.id,
                     name=workflow.name or "",
                     description=workflow.description or "",
                     tools=tools_data,
@@ -195,7 +197,7 @@ async def create_workflow(
         logger.info(f"Workflow created: {db_workflow.id} - {workflow.name}")
         
         return WorkflowResponse(
-            id=str(db_workflow.id),
+            id=db_workflow.id,
             name=db_workflow.name,
             description=db_workflow.description or "",
             tools=db_workflow.tools or {},
@@ -231,7 +233,7 @@ async def get_workflow(
             )
         
         return WorkflowResponse(
-            id=str(workflow.id),
+            id=workflow.id,
             name=workflow.name,
             description=workflow.description or "",
             tools=workflow.tools or {},
@@ -287,7 +289,7 @@ async def update_workflow(
         logger.info(f"Workflow updated: {db_workflow.id} - {workflow.name}")
         
         return WorkflowResponse(
-            id=str(db_workflow.id),
+            id=db_workflow.id,
             name=db_workflow.name,
             description=db_workflow.description or "",
             tools=db_workflow.tools or {},

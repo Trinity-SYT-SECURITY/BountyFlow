@@ -54,17 +54,20 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting BountyFlow Backend API...")
 
-    # Check if tables exist first (faster)
+    # Check if tables exist first (faster).
+    # SQLAlchemy 2.0 will not execute a bare string, so this probe always threw
+    # and every start took the "new database" branch: create_all is a no-op on
+    # an existing schema, so the migrations below never ran and new columns
+    # never reached an existing install.
+    from sqlalchemy import text as _sa_text
     try:
         async with engine.begin() as conn:
-            # Check if projects table exists
-            result = await conn.execute("""
-                SELECT name FROM sqlite_master 
-                WHERE type='table' AND name='projects' 
-                LIMIT 1
-            """)
+            result = await conn.execute(_sa_text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='projects' LIMIT 1"))
             tables_exist = result.fetchone() is not None
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Could not check for existing tables: {e}")
         tables_exist = False
     
     if not tables_exist:
@@ -79,6 +82,8 @@ async def lifespan(app: FastAPI):
         # Add missing columns to existing tables FIRST (before create_all touches anything)
         migrations = [
             ("targets", "scan_results", "TEXT"),
+            ("users", "reset_token", "VARCHAR(64)"),
+            ("users", "reset_token_expires", "DATETIME"),
         ]
         for table, column, col_type in migrations:
             try:
@@ -139,6 +144,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# One check, for every project-scoped route, that the caller may touch that
+# project. Added before CORS so CORS still wraps the 403 it can return.
+from .middleware.project_access import ProjectAccessMiddleware
+app.add_middleware(ProjectAccessMiddleware)
 
 # CORS middleware - MUST be added before routes
 app.add_middleware(

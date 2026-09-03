@@ -195,41 +195,84 @@ async def get_current_user_info(
         created_at=user.created_at
     )
 
+RESET_TOKEN_TTL = timedelta(hours=1)
+
+
 @router.post("/password-reset-request")
 async def request_password_reset(
     reset_request: PasswordResetRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
-    """Request password reset"""
-    # Find user by email
+    """Request a password reset.
+
+    Both halves of this used to be stubs: this one generated a token and threw
+    it away, and /password-reset returned success without touching anything.
+    The token is now stored against the account with an expiry so the reset
+    endpoint has something to verify.
+
+    There is no mail transport configured, so the token is returned in the
+    response when SMTP is not set up. That is deliberate for a self-hosted
+    single-operator tool, and it is stated in the response.
+    """
     query = select(User).where(User.email == reset_request.email)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
+    response = {"message": "If the email exists, a password reset link has been sent"}
+
     if user:
-        # Generate reset token
-        reset_token = secrets.token_urlsafe(32)
+        user.reset_token = secrets.token_urlsafe(32)
+        user.reset_token_expires = datetime.utcnow() + RESET_TOKEN_TTL
+        db.add(user)
+        await db.commit()
 
-        # In a real implementation, you'd store this token in database with expiration
-        # and send an email with the reset link
+        import os
+        if not os.getenv("SMTP_HOST"):
+            response["reset_token"] = user.reset_token
+            response["note"] = (
+                "No SMTP_HOST is configured, so the token is returned here "
+                "instead of being emailed."
+            )
 
-        # For now, just return success
-        pass
+    # The message is identical either way, so a caller cannot use this endpoint
+    # to find out which addresses have accounts.
+    return response
 
-    # Always return success to prevent email enumeration
-    return {"message": "If the email exists, a password reset link has been sent"}
 
 @router.post("/password-reset")
 async def reset_password(
     reset_data: PasswordReset,
     db: AsyncSession = Depends(get_db)
 ):
-    """Reset user password"""
-    # In a real implementation, you'd verify the reset token
-    # and update the user's password
+    """Reset a password using a token from /password-reset-request."""
+    query = select(User).where(User.reset_token == reset_data.token)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
 
-    # For now, just return success
+    if not user or not user.reset_token_expires:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    if user.reset_token_expires < datetime.utcnow():
+        user.reset_token = None
+        user.reset_token_expires = None
+        db.add(user)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    user.hashed_password = security_manager.hash_password(reset_data.new_password)
+    # Single use.
+    user.reset_token = None
+    user.reset_token_expires = None
+    db.add(user)
+    await db.commit()
+
     return {"message": "Password has been reset successfully"}
 
 @router.get("/users", response_model=list[UserResponse])

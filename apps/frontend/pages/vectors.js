@@ -3,6 +3,9 @@ import Head from 'next/head';
 import Link from 'next/link';
 import Layout from '../components/Layout';
 import { useToast } from '../components/Toast';
+import { attackFlowApi } from '../utils/attackFlows';
+
+const vectorApi = attackFlowApi('attack-vectors');
 
 export default function Vectors() {
   const toast = useToast();
@@ -64,16 +67,9 @@ export default function Vectors() {
     try {
       setIsLoading(true);
       // Fetch attack vectors from API
-      const response = await fetch(`http://localhost:8002/api/v1/attack-vectors/${selectedProject.id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setAttackVectors(data);
-        if (data.length > 0) {
-          setCurrentVector(data[0]);
-        }
-      } else {
-        setAttackVectors([]);
-      }
+      const data = await vectorApi.list(selectedProject.id);
+      setAttackVectors(data);
+      setCurrentVector(data.length > 0 ? data[0] : null);
     } catch (error) {
       console.error('Failed to load attack vectors:', error);
       setAttackVectors([]);
@@ -273,36 +269,59 @@ export default function Vectors() {
     setShowAddModal(true);
   };
 
-  const handleSaveVector = () => {
-    if (!newVectorName.trim()) return;
-    
-    const newVector = {
-      id: Math.max(...attackVectors.map(v => v.id)) + 1,
-      name: newVectorName,
-      description: 'New attack vector',
-      severity: severity,
-      plausibility: plausibility,
-      risk: risk,
-      nodes: [],
-      connections: []
-    };
-    
-    setAttackVectors([...attackVectors, newVector]);
-    setCurrentVector(newVector);
-    setShowAddModal(false);
-    setNewVectorName('');
-  };
+  const handleSaveVector = async () => {
+    if (!newVectorName.trim() || !selectedProject) return;
 
-  const handleDeleteVector = (vectorId) => {
-    setAttackVectors(attackVectors.filter(v => v.id !== vectorId));
-    if (currentVector?.id === vectorId) {
-      setCurrentVector(attackVectors.length > 1 ? attackVectors[0] : null);
+    try {
+      const created = await vectorApi.create(selectedProject.id, {
+        name: newVectorName,
+        description: 'New attack vector',
+        severity,
+        plausibility,
+        risk,
+        nodes: [],
+        connections: []
+      });
+      setAttackVectors([...attackVectors, created]);
+      setCurrentVector(created);
+      setShowAddModal(false);
+      setNewVectorName('');
+    } catch (error) {
+      toast.error(`Could not create the attack vector: ${error.message}`);
     }
   };
 
-  const handleSaveChanges = () => {
-    // In a real implementation, save changes to backend
-    toast.success('Attack vector saved successfully!');
+  const handleDeleteVector = async (vectorId) => {
+    try {
+      await vectorApi.remove(vectorId);
+      const remaining = attackVectors.filter(v => v.id !== vectorId);
+      setAttackVectors(remaining);
+      if (currentVector?.id === vectorId) {
+        setCurrentVector(remaining.length > 0 ? remaining[0] : null);
+      }
+    } catch (error) {
+      toast.error(`Could not delete the attack vector: ${error.message}`);
+    }
+  };
+
+  const handleSaveChanges = async () => {
+    if (!currentVector) return;
+    try {
+      const saved = await vectorApi.update(currentVector.id, {
+        name: currentVector.name,
+        description: currentVector.description,
+        severity: currentVector.severity,
+        plausibility: currentVector.plausibility,
+        risk: currentVector.risk,
+        nodes: currentVector.nodes || [],
+        connections: currentVector.connections || []
+      });
+      setAttackVectors(attackVectors.map(v => (v.id === saved.id ? saved : v)));
+      setCurrentVector(saved);
+      toast.success('Attack vector saved successfully!');
+    } catch (error) {
+      toast.error(`Could not save the attack vector: ${error.message}`);
+    }
   };
 
   const handleDeleteNode = (nodeId) => {

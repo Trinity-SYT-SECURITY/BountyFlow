@@ -826,7 +826,7 @@ async def execute_tools(
                 project_id=project_id,
                 action="tool_executed",
                 resource_type="tool_execution",
-                entity_id=str(execution.id),
+                resource_id=str(execution.id),
                 details={
                     "tool_id": tool.id,
                     "tool_name": tool.name,

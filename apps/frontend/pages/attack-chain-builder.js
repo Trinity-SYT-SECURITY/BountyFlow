@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useToast } from '../components/Toast';
+import { attackFlowApi } from '../utils/attackFlows';
+
+const chainApi = attackFlowApi('attack-chains');
 
 export default function AttackChainBuilder() {
   const toast = useToast();
@@ -54,16 +57,9 @@ export default function AttackChainBuilder() {
     try {
       setIsLoading(true);
       // Fetch attack chains from API
-      const response = await fetch(`http://localhost:8002/api/v1/attack-chains/${selectedProject.id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setAttackChains(data);
-        if (data.length > 0) {
-          setCurrentChain(data[0]);
-        }
-      } else {
-        setAttackChains([]);
-      }
+      const data = await chainApi.list(selectedProject.id);
+      setAttackChains(data);
+      setCurrentChain(data.length > 0 ? data[0] : null);
     } catch (error) {
       console.error('Failed to load attack chains:', error);
       setAttackChains([]);
@@ -138,36 +134,59 @@ export default function AttackChainBuilder() {
     setShowAddModal(true);
   };
 
-  const handleSaveChain = () => {
-    if (!newChainName.trim()) return;
-    
-    const newChain = {
-      id: Math.max(...attackChains.map(c => c.id)) + 1,
-      name: newChainName,
-      description: 'New attack chain',
-      severity: severity,
-      plausibility: plausibility,
-      risk: risk,
-      nodes: [],
-      connections: []
-    };
-    
-    setAttackChains([...attackChains, newChain]);
-    setCurrentChain(newChain);
-    setShowAddModal(false);
-    setNewChainName('');
-  };
+  const handleSaveChain = async () => {
+    if (!newChainName.trim() || !selectedProject) return;
 
-  const handleDeleteChain = (chainId) => {
-    setAttackChains(attackChains.filter(c => c.id !== chainId));
-    if (currentChain?.id === chainId) {
-      setCurrentChain(attackChains.length > 1 ? attackChains[0] : null);
+    try {
+      const created = await chainApi.create(selectedProject.id, {
+        name: newChainName,
+        description: 'New attack chain',
+        severity,
+        plausibility,
+        risk,
+        nodes: [],
+        connections: []
+      });
+      setAttackChains([...attackChains, created]);
+      setCurrentChain(created);
+      setShowAddModal(false);
+      setNewChainName('');
+    } catch (error) {
+      toast.error(`Could not create the attack chain: ${error.message}`);
     }
   };
 
-  const handleSaveChanges = () => {
-    // In a real implementation, save changes to backend
-    toast.success('Attack chain saved successfully!');
+  const handleDeleteChain = async (chainId) => {
+    try {
+      await chainApi.remove(chainId);
+      const remaining = attackChains.filter(c => c.id !== chainId);
+      setAttackChains(remaining);
+      if (currentChain?.id === chainId) {
+        setCurrentChain(remaining.length > 0 ? remaining[0] : null);
+      }
+    } catch (error) {
+      toast.error(`Could not delete the attack chain: ${error.message}`);
+    }
+  };
+
+  const handleSaveChanges = async () => {
+    if (!currentChain) return;
+    try {
+      const saved = await chainApi.update(currentChain.id, {
+        name: currentChain.name,
+        description: currentChain.description,
+        severity: currentChain.severity,
+        plausibility: currentChain.plausibility,
+        risk: currentChain.risk,
+        nodes: currentChain.nodes || [],
+        connections: currentChain.connections || []
+      });
+      setAttackChains(attackChains.map(c => (c.id === saved.id ? saved : c)));
+      setCurrentChain(saved);
+      toast.success('Attack chain saved successfully!');
+    } catch (error) {
+      toast.error(`Could not save the attack chain: ${error.message}`);
+    }
   };
 
   const handleDeleteNode = (nodeId) => {

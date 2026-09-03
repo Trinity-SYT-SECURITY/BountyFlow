@@ -239,18 +239,40 @@ async def get_report(
         logger.error(f"Error getting report: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+class ReportUpdate(BaseModel):
+    """Fields the report editor may change. All optional: the editor sends only
+    what it touched."""
+    title: Optional[str] = None
+    markdown_content: Optional[str] = None
+    status: Optional[str] = None
+
+
 @router.put("/{report_id}")
 async def update_report(
     report_id: int,
-    title: Optional[str] = None,
-    markdown_content: Optional[str] = None,
-    status: Optional[str] = None,
+    payload: Optional[ReportUpdate] = Body(None),
+    title: Optional[str] = Query(None),
+    markdown_content: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Update report content (edit markdown)"""
+    """Update report content (edit markdown).
+
+    These three fields used to be declared bare, which makes FastAPI read them
+    from the query string. The editor sends them as a JSON body, so every save
+    updated nothing and still answered 200 — the UI said "Report saved" and the
+    edit was gone on reload. The body is now the primary source; the query
+    parameters stay for anything that was calling it the old way.
+    """
     try:
         from sqlalchemy import update
+
+        if payload is not None:
+            title = payload.title if payload.title is not None else title
+            markdown_content = (payload.markdown_content
+                                if payload.markdown_content is not None else markdown_content)
+            status = payload.status if payload.status is not None else status
         
         result = await db.execute(select(Report).where(Report.id == report_id))
         report = result.scalar_one_or_none()

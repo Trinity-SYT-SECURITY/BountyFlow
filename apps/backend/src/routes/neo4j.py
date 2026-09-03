@@ -139,8 +139,11 @@ async def cleanup_duplicate_nodes_endpoint(
         # Clean up duplicates
         cleaned_data = await cleanup_duplicate_nodes(graph_data, project_id)
 
-        # Clear cache to ensure fresh data
-        neo4j_service._graph_cache.pop(f"kg_graph_{project_id}", None)
+        # Clear cache to ensure fresh data. The cache is a module-level dict with
+        # its own invalidator; reaching for it as an attribute of the service
+        # raised AttributeError and turned every cleanup into a 500.
+        from ..services.neo4j_service import invalidate_graph_cache
+        invalidate_graph_cache(project_id)
 
         return {
             "message": "Duplicate nodes cleaned up successfully",
@@ -201,11 +204,50 @@ async def get_project_graph(
             'error': f'Failed to load graph data: {str(e)}'
         }
 
+async def _record_node(project_id: int, node_type: str, node_data: Dict[str, Any],
+                       current_user: dict) -> None:
+    """Write a node into the store GET /graph/{project_id} actually reads.
+
+    The four writers below hand their node to Neo4j, but the reader builds its
+    answer from the knowledge_nodes table, so anything written through the API
+    answered "added successfully" and was never seen again. Writing both keeps
+    the two stores saying the same thing.
+    """
+    from ..models.database import async_session
+    from ..models.models import KnowledgeNode, User
+    from sqlalchemy import select
+
+    async with async_session() as db:
+        created_by = None
+        if current_user:
+            created_by = current_user.get("user_id")
+            if created_by is None and current_user.get("username"):
+                row = await db.execute(
+                    select(User.id).where(User.username == current_user["username"]))
+                created_by = row.scalar_one_or_none()
+        if created_by is None:
+            row = await db.execute(select(User.id).order_by(User.id).limit(1))
+            created_by = row.scalar_one_or_none()
+
+        target_id = node_data.get("target_id")
+        db.add(KnowledgeNode(
+            project_id=project_id,
+            target_id=target_id if isinstance(target_id, int) else None,
+            node_type=node_type,
+            node_data=node_data,
+            created_by=created_by,
+        ))
+        await db.commit()
+
+    from ..services.neo4j_service import invalidate_graph_cache
+    invalidate_graph_cache(project_id)
+
 @router.post("/graph/{project_id}/user")
 async def add_user_to_graph(project_id: int, user_data: Dict[str, Any], current_user: dict = Depends(get_current_user)):
     """Add user to project graph"""
     try:
         neo4j_service.add_user_node(project_id, user_data)
+        await _record_node(project_id, "user", user_data, current_user)
         return {"message": "User added to graph successfully"}
     except Exception as e:
         logger.error(f"Failed to add user to graph: {e}")
@@ -216,6 +258,7 @@ async def add_server_to_graph(project_id: int, server_data: Dict[str, Any], curr
     """Add server to project graph"""
     try:
         neo4j_service.add_server_node(project_id, server_data)
+        await _record_node(project_id, "server", server_data, current_user)
         return {"message": "Server added to graph successfully"}
     except Exception as e:
         logger.error(f"Failed to add server to graph: {e}")
@@ -226,6 +269,7 @@ async def add_target_to_graph(project_id: int, target_data: Dict[str, Any], curr
     """Add target to project graph"""
     try:
         neo4j_service.add_target_node(project_id, target_data)
+        await _record_node(project_id, "target", target_data, current_user)
         return {"message": "Target added to graph successfully"}
     except Exception as e:
         logger.error(f"Failed to add target to graph: {e}")
@@ -236,6 +280,7 @@ async def add_finding_to_graph(project_id: int, finding_data: Dict[str, Any], cu
     """Add finding to project graph"""
     try:
         neo4j_service.add_finding_node(project_id, finding_data)
+        await _record_node(project_id, "finding", finding_data, current_user)
         return {"message": "Finding added to graph successfully"}
     except Exception as e:
         logger.error(f"Failed to add finding to graph: {e}")

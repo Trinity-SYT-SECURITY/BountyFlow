@@ -153,8 +153,8 @@ async def get_activity_feed(
                     "username": user.username if user else "Unknown"
                 },
                 "action": log.action,
-                "entity_type": log.entity_type,
-                "entity_id": log.entity_id,
+                "entity_type": log.resource_type,
+                "entity_id": log.resource_id,
                 "details": log.details,
                 "time_ago": _format_time_ago(log.timestamp)
             }
@@ -785,7 +785,10 @@ async def get_recent_activity(
         for log in logs:
             user_query = select(User).where(User.id == log.user_id) if log.user_id else None
             user = None
-            if user_query:
+            # A Select has no truth value; `if user_query:` raised
+            # "Boolean value of this clause is not defined" as soon as the
+            # audit log had any rows in it.
+            if user_query is not None:
                 user_result = await db.execute(user_query)
                 user = user_result.scalar_one_or_none()
             

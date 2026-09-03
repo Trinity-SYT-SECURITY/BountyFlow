@@ -35,6 +35,10 @@ class User(Base):
     full_name: Mapped[Optional[str]] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Single-use password reset token and its expiry. Without these the reset
+    # endpoint had nothing to verify against and simply returned success.
+    reset_token: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    reset_token_expires: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -437,3 +441,34 @@ class ActivityLog(Base):
     tool_execution: Mapped[Optional["ToolExecution"]] = relationship("ToolExecution")
 
 
+
+
+class AttackFlow(Base):
+    """An attack vector, chain or flow built on one of the three builder pages.
+
+    All three pages store the same record — a name, three 1-10 scores, a list
+    of nodes and the connections between them — so they share one table and are
+    told apart by `kind`. Before this existed the pages called
+    /attack-vectors/{id}, /attack-chains/{id} and /attack-flows/{id}, none of
+    which the backend implemented, and everything built on them was lost on
+    reload.
+    """
+    __tablename__ = "attack_flows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    project_id: Mapped[int] = mapped_column(Integer, ForeignKey("projects.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), index=True)  # vector, chain, flow
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    severity: Mapped[int] = mapped_column(Integer, default=5)
+    plausibility: Mapped[int] = mapped_column(Integer, default=5)
+    risk: Mapped[int] = mapped_column(Integer, default=5)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    nodes: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, default=list)
+    connections: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now())
+
+    project: Mapped["Project"] = relationship("Project")

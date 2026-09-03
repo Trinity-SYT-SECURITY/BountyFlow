@@ -6,6 +6,8 @@ export default function NetworkGraph() {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [selectedProject, setSelectedProject] = useState(null);
   const [graphData, setGraphData] = useState({
     servers: [],
     users: [],
@@ -14,34 +16,87 @@ export default function NetworkGraph() {
   const svgRef = useRef(null);
 
   useEffect(() => {
-    loadGraphData();
+    loadProjects();
   }, []);
 
-  const loadGraphData = () => {
-    // Mock data - in real app, fetch from Neo4j
-    const mockData = {
-      servers: [
-        { id: 1, name: "Web Server", ip: "192.168.1.10", type: "web", status: "compromised", ports: [80, 443, 22] },
-        { id: 2, name: "Database Server", ip: "192.168.1.20", type: "database", status: "accessible", ports: [3306, 22] },
-        { id: 3, name: "File Server", ip: "192.168.1.30", type: "fileserver", status: "accessible", ports: [21, 22, 445] },
-        { id: 4, name: "Domain Controller", ip: "192.168.1.1", type: "dc", status: "target", ports: [88, 389, 636] }
-      ],
-      users: [
-        { id: 1, username: "admin", server_id: 1, privilege: "root", status: "compromised" },
-        { id: 2, username: "dbuser", server_id: 2, privilege: "user", status: "compromised" },
-        { id: 3, username: "guest", server_id: 3, privilege: "guest", status: "accessible" },
-        { id: 4, username: "administrator", server_id: 4, privilege: "admin", status: "target" }
-      ],
-      relationships: [
-        { from: 1, to: 2, type: "database_connection", status: "active" },
-        { from: 1, to: 3, type: "file_access", status: "active" },
-        { from: 2, to: 4, type: "ldap_query", status: "attempted" },
-        { from: 3, to: 4, type: "smb_enum", status: "successful" }
-      ]
-    };
+  useEffect(() => {
+    if (selectedProject) loadGraphData();
+  }, [selectedProject]);
 
-    setGraphData(mockData);
-    generateGraphNodes(mockData);
+  const loadProjects = async () => {
+    try {
+      const response = await fetch('http://localhost:8002/api/v1/projects');
+      if (!response.ok) return;
+      const data = await response.json();
+      setProjects(data);
+      if (data.length > 0) setSelectedProject(data[0]);
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+    }
+  };
+
+  const loadGraphData = async () => {
+    // The four servers, four users and their relationships used to be literals
+    // in this function, so the page looked the same on every instance. It now
+    // reads the project's knowledge graph and derives the network view from it.
+    if (!selectedProject) return;
+    try {
+      const response = await fetch(
+        `http://localhost:8002/api/v1/neo4j/graph/${selectedProject.id}`);
+      if (!response.ok) {
+        setGraphData({ servers: [], users: [], relationships: [] });
+        setNodes([]);
+        setEdges([]);
+        return;
+      }
+      const payload = await response.json();
+      const data = toNetworkView(payload);
+      setGraphData(data);
+      generateGraphNodes(data);
+    } catch (error) {
+      console.error('Failed to load graph data:', error);
+      setGraphData({ servers: [], users: [], relationships: [] });
+      setNodes([]);
+      setEdges([]);
+    }
+  };
+
+  /* The graph API returns typed nodes and relationships; this page thinks in
+     servers, users and the links between them. Targets and servers both become
+     hosts, everything else is dropped from this particular view. */
+  const toNetworkView = (payload) => {
+    const nodes = payload.nodes || [];
+    const relationships = payload.relationships || [];
+    const isHost = (n) => ['server', 'target'].includes((n.type || '').toLowerCase());
+    const isUser = (n) => (n.type || '').toLowerCase() === 'user';
+
+    const servers = nodes.filter(isHost).map((n) => ({
+      id: n.id,
+      name: n.label,
+      ip: n.properties?.ip || n.properties?.target_value || n.label,
+      type: (n.properties?.type || 'host'),
+      status: n.properties?.status || 'accessible',
+      ports: n.properties?.open_ports || n.properties?.ports || []
+    }));
+
+    const users = nodes.filter(isUser).map((n) => ({
+      id: n.id,
+      username: n.label,
+      server_id: n.properties?.server_id || null,
+      privilege: n.properties?.privilege || n.properties?.privilege_level || 'user',
+      status: n.properties?.status || 'accessible'
+    }));
+
+    return {
+      servers,
+      users,
+      relationships: relationships.map((r) => ({
+        from: r.from ?? r.source,
+        to: r.to ?? r.target,
+        type: r.type,
+        status: r.properties?.status || 'active'
+      }))
+    };
   };
 
   const generateGraphNodes = (data) => {
@@ -51,7 +106,7 @@ export default function NetworkGraph() {
     // Add server nodes
     data.servers.forEach(server => {
       nodes.push({
-        id: `server_${server.id}`,
+        id: server.id,
         type: 'server',
         label: server.name,
         ip: server.ip,
@@ -66,7 +121,7 @@ export default function NetworkGraph() {
     data.users.forEach(user => {
       const server = data.servers.find(s => s.id === user.server_id);
       nodes.push({
-        id: `user_${user.id}`,
+        id: user.id,
         type: 'user',
         label: user.username,
         privilege: user.privilege,
@@ -81,8 +136,8 @@ export default function NetworkGraph() {
     data.relationships.forEach(rel => {
       edges.push({
         id: `edge_${rel.from}_${rel.to}`,
-        from: `server_${rel.from}`,
-        to: `server_${rel.to}`,
+        from: rel.from,
+        to: rel.to,
         type: rel.type,
         status: rel.status
       });
@@ -157,6 +212,17 @@ export default function NetworkGraph() {
               ← Back to Dashboard
             </Link>
             <h1 className="text-2xl font-bold">Network Graph</h1>
+            <select
+              value={selectedProject?.id || ''}
+              onChange={(e) => setSelectedProject(
+                projects.find(p => p.id === parseInt(e.target.value)) || null)}
+              className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm"
+            >
+              {projects.length === 0 && <option value="">No projects</option>}
+              {projects.map(project => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
           </div>
           <div className="flex space-x-2">
             <button className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg">

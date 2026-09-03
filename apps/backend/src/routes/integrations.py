@@ -43,6 +43,31 @@ class ImportResponse(BaseModel):
     activity_log_id: int
 
 
+async def _caller_id(db: AsyncSession, current_user: Optional[dict]) -> int:
+    """The account behind this request.
+
+    This used to read current_user["id"], a key the auth middleware never sets,
+    so every import was recorded as user 1 and the person who ran it could not
+    open the project it created.
+    """
+    from sqlalchemy import select
+
+    from ..models.models import User
+
+    if current_user:
+        user_id = current_user.get("user_id")
+        if user_id is not None:
+            return user_id
+        username = current_user.get("username")
+        if username and username != "anonymous":
+            found = (await db.execute(
+                select(User.id).where(User.username == username))).scalar_one_or_none()
+            if found is not None:
+                return found
+
+    first = (await db.execute(select(User.id).order_by(User.id).limit(1))).scalar_one_or_none()
+    return first or 1
+
 @router.post("/analyze-format", response_model=FormatAnalysisResponse)
 async def analyze_format(
     request: ImportRequest,
@@ -70,7 +95,7 @@ async def import_external_data(
 ):
     """Import external tool output into BountyFlow"""
     try:
-        user_id = current_user.get("id", 1) if current_user else 1
+        user_id = await _caller_id(db, current_user)
         
         result = await external_tool_integration_service.normalize_and_import(
             db=db,
@@ -82,7 +107,10 @@ async def import_external_data(
         )
         
         return ImportResponse(**result)
-        
+
+    except ValueError as e:
+        # Nothing usable in the payload — the caller's problem, not ours.
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to import external data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to import: {str(e)}")
@@ -103,19 +131,23 @@ async def import_from_file(
         content = await file.read()
         raw_data = content.decode("utf-8", errors="ignore")
         
-        user_id = current_user.get("id", 1) if current_user else 1
+        user_id = await _caller_id(db, current_user)
         
         result = await external_tool_integration_service.normalize_and_import(
             db=db,
             raw_data=raw_data,
             project_name=project_name,
-            format_hint=format_hint or file.filename.split(".")[-1] if file.filename else None,
+            format_hint=format_hint or (
+                file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename
+                else None),
             source_tool=source_tool,
             user_id=user_id
         )
         
         return ImportResponse(**result)
-        
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to import from file: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to import from file: {str(e)}")

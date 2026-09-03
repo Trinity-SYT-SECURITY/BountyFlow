@@ -100,13 +100,27 @@ class SimpleDatabaseService:
                 raise
 
     @staticmethod
-    async def get_projects() -> List[Project]:
-        """Get all projects from database"""
+    async def get_projects(user_id: Optional[int] = None,
+                           include_all: bool = False) -> List[Project]:
+        """Projects this caller may see.
+
+        Passing a user_id narrows the list to projects they created or belong
+        to; superusers pass include_all. Without either the listing returned
+        every project on the instance to anyone who could log in.
+        """
         from ..models.database import async_session
+        from ..models.models import User
 
         async with async_session() as session:
             try:
-                result = await session.execute(select(Project))
+                query = select(Project)
+                if user_id is not None and not include_all:
+                    member_ids = await session.execute(
+                        select(Project.id).join(Project.users).where(User.id == user_id))
+                    member_ids = [row[0] for row in member_ids.all()]
+                    query = query.where(
+                        or_(Project.created_by == user_id, Project.id.in_(member_ids)))
+                result = await session.execute(query)
                 projects = result.scalars().all()
 
                 project_list = []

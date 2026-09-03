@@ -59,7 +59,7 @@ async def get_audit_logs(
             query = query.where(AuditLog.action == action)
         
         if entity_type:
-            query = query.where(AuditLog.entity_type == entity_type)
+            query = query.where(AuditLog.resource_type == entity_type)
         
         # Apply pagination
         query = query.offset(skip).limit(limit).order_by(desc(AuditLog.timestamp))
@@ -84,8 +84,8 @@ async def get_audit_logs(
                     "username": user.username if user else "Unknown"
                 },
                 "action": log.action,
-                "entity_type": log.entity_type,
-                "entity_id": log.entity_id,
+                "entity_type": log.resource_type,
+                "entity_id": log.resource_id,
                 "details": log.details
             })
         
@@ -97,7 +97,7 @@ async def get_audit_logs(
         if action:
             count_query = count_query.where(AuditLog.action == action)
         if entity_type:
-            count_query = count_query.where(AuditLog.entity_type == entity_type)
+            count_query = count_query.where(AuditLog.resource_type == entity_type)
         
         count_result = await db.execute(count_query)
         total = count_result.scalar()

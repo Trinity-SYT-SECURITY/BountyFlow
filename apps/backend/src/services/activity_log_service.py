@@ -43,15 +43,26 @@ class ActivityLogService:
     ) -> ActivityLog:
         """Create activity log entry from tool execution"""
         try:
-            # Get tool name
+            # Get tool name and target value.
+            # Touching tool_execution.tool / .target here lazy-loads on an async
+            # session, which raises "greenlet_spawn has not been called" and
+            # meant no tool execution ever reached the activity log. Query for
+            # them instead.
+            from sqlalchemy import select as _select
+            from ..models.models import Tool as _Tool, Target as _Target
+
             tool_name = "Unknown"
-            if tool_execution.tool:
-                tool_name = tool_execution.tool.name
-            
-            # Get target value
+            if tool_execution.tool_id:
+                row = await db.execute(
+                    _select(_Tool.name).where(_Tool.id == tool_execution.tool_id))
+                tool_name = row.scalar_one_or_none() or "Unknown"
+
             target_value = None
-            if tool_execution.target:
-                target_value = tool_execution.target.target_value
+            if tool_execution.target_id:
+                row = await db.execute(
+                    _select(_Target.target_value).where(
+                        _Target.id == tool_execution.target_id))
+                target_value = row.scalar_one_or_none()
             
             # Create base activity log
             activity_log = ActivityLog(

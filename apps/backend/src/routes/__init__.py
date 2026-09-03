@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from ..middleware.auth import verify_token
 from .projects import router as projects_router
 from .tools import router as tools_router
 from .auth import router as auth_router
@@ -15,6 +17,7 @@ from .admin import router as admin_router
 from .reports import router as reports_router
 from .activity_logs import router as activity_logs_router
 from .integrations import router as integrations_router
+from .attack_flows import build_router as build_attack_router, KINDS as ATTACK_KINDS
 
 api_router = APIRouter()
 
@@ -65,10 +68,14 @@ api_router.include_router(
     tags=["workflows"]
 )
 
+# Every other router authenticates; this one declared no dependency at all, so
+# an anonymous caller could read the whole conversation history, spend the
+# configured model key, and clear the history with a fixed string in the query.
 api_router.include_router(
     ai_router,
     prefix="/ai",
-    tags=["ai", "artificial-intelligence"]
+    tags=["ai", "artificial-intelligence"],
+    dependencies=[Depends(verify_token)]
 )
 
 api_router.include_router(
@@ -102,3 +109,12 @@ api_router.include_router(
     integrations_router,
     tags=["integrations", "external-tools"]
 )
+
+# The three builder pages each call their own prefix; they store the same
+# record, so one CRUD router is registered once per kind.
+for _prefix, _kind in ATTACK_KINDS.items():
+    api_router.include_router(
+        build_attack_router(_kind),
+        prefix=f"/{_prefix}",
+        tags=["attack-flows", _kind]
+    )

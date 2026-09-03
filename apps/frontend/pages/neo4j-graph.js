@@ -8,6 +8,8 @@ export default function Neo4jGraph() {
     relationships: []
   });
   const [selectedNode, setSelectedNode] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [selectedProject, setSelectedProject] = useState(null);
   const [aiInsights, setAiInsights] = useState([]);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [graphStats, setGraphStats] = useState({
@@ -19,166 +21,49 @@ export default function Neo4jGraph() {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    loadGraphData();
+    loadProjects();
   }, []);
 
-  const loadGraphData = async () => {
-    try {
-      // Mock Neo4j data - in real app, fetch from Neo4j API
-      const mockData = {
-        nodes: [
-          {
-            id: 'user_1',
-            type: 'User',
-            label: 'admin',
-            properties: {
-              username: 'admin',
-              privilege: 'root',
-              status: 'compromised',
-              lastLogin: '2025-01-11 14:30:00',
-              passwordHash: 'hash123'
-            },
-            x: 200,
-            y: 150
-          },
-          {
-            id: 'user_2',
-            type: 'User',
-            label: 'dbuser',
-            properties: {
-              username: 'dbuser',
-              privilege: 'user',
-              status: 'compromised',
-              lastLogin: '2025-01-11 12:15:00',
-              passwordHash: 'hash456'
-            },
-            x: 400,
-            y: 150
-          },
-          {
-            id: 'server_1',
-            type: 'Server',
-            label: 'Web Server',
-            properties: {
-              ip: '192.168.1.10',
-              hostname: 'web-server',
-              os: 'Linux',
-              status: 'compromised',
-              openPorts: [80, 443, 22],
-              lastScan: '2025-01-11 14:30:00'
-            },
-            x: 200,
-            y: 300
-          },
-          {
-            id: 'server_2',
-            type: 'Server',
-            label: 'Database Server',
-            properties: {
-              ip: '192.168.1.20',
-              hostname: 'db-server',
-              os: 'Linux',
-              status: 'accessible',
-              openPorts: [3306, 22],
-              lastScan: '2025-01-11 12:15:00'
-            },
-            x: 400,
-            y: 300
-          },
-          {
-            id: 'server_3',
-            type: 'Server',
-            label: 'File Server',
-            properties: {
-              ip: '192.168.1.30',
-              hostname: 'file-server',
-              os: 'Windows',
-              status: 'target',
-              openPorts: [21, 445, 22],
-              lastScan: '2025-01-11 10:45:00'
-            },
-            x: 600,
-            y: 300
-          },
-          {
-            id: 'server_4',
-            type: 'Server',
-            label: 'Domain Controller',
-            properties: {
-              ip: '192.168.1.1',
-              hostname: 'dc-server',
-              os: 'Windows Server',
-              status: 'target',
-              openPorts: [88, 389, 636],
-              lastScan: '2025-01-11 09:30:00'
-            },
-            x: 300,
-            y: 450
-          }
-        ],
-        relationships: [
-          {
-            id: 'rel_1',
-            type: 'HAS_ACCESS',
-            from: 'user_1',
-            to: 'server_1',
-            properties: {
-              method: 'SSH',
-              timestamp: '2025-01-11 14:30:00',
-              privilege: 'root'
-            }
-          },
-          {
-            id: 'rel_2',
-            type: 'HAS_ACCESS',
-            from: 'user_2',
-            to: 'server_2',
-            properties: {
-              method: 'Database',
-              timestamp: '2025-01-11 12:15:00',
-              privilege: 'user'
-            }
-          },
-          {
-            id: 'rel_3',
-            type: 'NETWORK_CONNECTION',
-            from: 'server_1',
-            to: 'server_2',
-            properties: {
-              protocol: 'TCP',
-              port: 3306,
-              status: 'active'
-            }
-          },
-          {
-            id: 'rel_4',
-            type: 'NETWORK_CONNECTION',
-            from: 'server_1',
-            to: 'server_3',
-            properties: {
-              protocol: 'SMB',
-              port: 445,
-              status: 'active'
-            }
-          },
-          {
-            id: 'rel_5',
-            type: 'LDAP_QUERY',
-            from: 'server_2',
-            to: 'server_4',
-            properties: {
-              query: 'user enumeration',
-              timestamp: '2025-01-11 11:00:00'
-            }
-          }
-        ]
-      };
+  useEffect(() => {
+    if (selectedProject) loadGraphData();
+  }, [selectedProject]);
 
-      setGraphData(mockData);
-      calculateGraphStats(mockData);
-      generateAiInsights(mockData);
+  const loadProjects = async () => {
+    try {
+      const response = await fetch('http://localhost:8002/api/v1/projects');
+      if (!response.ok) return;
+      const data = await response.json();
+      setProjects(data);
+      if (data.length > 0) setSelectedProject(data[0]);
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+    }
+  };
+
+  const loadGraphData = async () => {
+    // This page used to draw a `mockData` object written into the source — four
+    // servers, four users and their relationships — so it looked populated on
+    // an empty instance and never showed the engagement. It now reads the same
+    // graph the Security Map does.
+    if (!selectedProject) return;
+    try {
+      const response = await fetch(
+        `http://localhost:8002/api/v1/neo4j/graph/${selectedProject.id}`);
+      if (!response.ok) {
+        setGraphData({ nodes: [], relationships: [] });
+        return;
+      }
+      const payload = await response.json();
+      const data = {
+        nodes: payload.nodes || [],
+        relationships: payload.relationships || []
+      };
+      setGraphData(data);
+      calculateGraphStats(data);
+      generateAiInsights(data);
     } catch (error) {
       console.error('Failed to load graph data:', error);
+      setGraphData({ nodes: [], relationships: [] });
     }
   };
 
@@ -187,10 +72,10 @@ export default function Neo4jGraph() {
       totalNodes: data.nodes.length,
       totalRelationships: data.relationships.length,
       compromisedNodes: data.nodes.filter(node => 
-        node.properties.status === 'compromised'
+        node.properties?.status === 'compromised'
       ).length,
       criticalPaths: data.relationships.filter(rel => 
-        rel.type === 'HAS_ACCESS' && rel.properties.privilege === 'root'
+        rel.type === 'HAS_ACCESS' && rel.properties?.privilege === 'root'
       ).length
     };
     setGraphStats(stats);
@@ -231,14 +116,14 @@ export default function Neo4jGraph() {
 
   const getNodeColor = (node) => {
     if (node.type === 'User') {
-      switch (node.properties.status) {
+      switch (node.properties?.status) {
         case 'compromised': return '#EF4444';
         case 'accessible': return '#F59E0B';
         case 'target': return '#3B82F6';
         default: return '#6B7280';
       }
     } else {
-      switch (node.properties.status) {
+      switch (node.properties?.status) {
         case 'compromised': return '#EF4444';
         case 'accessible': return '#F59E0B';
         case 'target': return '#3B82F6';
@@ -249,14 +134,14 @@ export default function Neo4jGraph() {
 
   const getNodeIcon = (node) => {
     if (node.type === 'User') {
-      switch (node.properties.privilege) {
+      switch (node.properties?.privilege) {
         case 'root': return '👑';
         case 'admin': return '🔑';
         case 'user': return '👤';
         default: return '👤';
       }
     } else {
-      switch (node.properties.os) {
+      switch (node.properties?.os) {
         case 'Linux': return '🐧';
         case 'Windows': return '🪟';
         case 'Windows Server': return '🖥️';
@@ -300,6 +185,17 @@ export default function Neo4jGraph() {
               ← Back to Dashboard
             </Link>
             <h1 className="text-2xl font-bold">Neo4j Graph Analysis</h1>
+            <select
+              value={selectedProject?.id || ''}
+              onChange={(e) => setSelectedProject(
+                projects.find(p => p.id === parseInt(e.target.value)) || null)}
+              className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm"
+            >
+              {projects.length === 0 && <option value="">No projects</option>}
+              {projects.map(project => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
           </div>
           <div className="flex space-x-2">
             <button
@@ -436,16 +332,16 @@ export default function Neo4jGraph() {
                   </div>
                   <div className="text-gray-400 mt-2">
                     <div>Type: {selectedNode.type}</div>
-                    <div>Status: {selectedNode.properties.status}</div>
+                    <div>Status: {selectedNode.properties?.status}</div>
                     {selectedNode.type === 'User' ? (
                       <>
-                        <div>Privilege: {selectedNode.properties.privilege}</div>
-                        <div>Last Login: {selectedNode.properties.lastLogin}</div>
+                        <div>Privilege: {selectedNode.properties?.privilege}</div>
+                        <div>Last Login: {selectedNode.properties?.lastLogin}</div>
                       </>
                     ) : (
                       <>
-                        <div>IP: {selectedNode.properties.ip}</div>
-                        <div>OS: {selectedNode.properties.os}</div>
+                        <div>IP: {selectedNode.properties?.ip}</div>
+                        <div>OS: {selectedNode.properties?.os}</div>
                         <div>Ports: {selectedNode.properties.openPorts?.join(', ')}</div>
                       </>
                     )}

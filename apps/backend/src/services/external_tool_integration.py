@@ -148,6 +148,19 @@ class ExternalToolIntegrationService:
                 f"{len(normalized.discovered_users)} users"
             )
             
+            # An import that produced nothing is a failed import. It used to
+            # answer 200 with confidence 0.0 and an empty project, which the UI
+            # showed as success and left the user hunting for data that was
+            # never there.
+            extracted = (len(normalized.targets) + len(normalized.findings)
+                         + len(normalized.discovered_users)
+                         + len(normalized.discovered_files))
+            if extracted == 0:
+                raise ValueError(
+                    "Nothing could be extracted from this input. Check the "
+                    "format hint and that the payload is the tool's own output."
+                )
+
             # Create or get project
             if project_name:
                 project = await self._get_or_create_project(

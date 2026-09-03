@@ -322,6 +322,10 @@ class Neo4jService:
                             display_name = node_data.get('target_value', f'Target {node.id}')
                         elif node.node_type == 'file':
                             display_name = node_data.get('filename', f'File {node.id}')
+                        elif node.node_type == 'server':
+                            display_name = (node_data.get('hostname')
+                                            or node_data.get('ip')
+                                            or f'Server {node.id}')
                         else:
                             display_name = f'{node.node_type.capitalize()} {node.id}'
                     

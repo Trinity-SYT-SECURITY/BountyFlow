@@ -192,7 +192,7 @@ async def get_user_details(
                 {
                     "id": a.id,
                     "action": a.action,
-                    "entity_type": a.entity_type,
+                    "entity_type": a.resource_type,
                     "timestamp": a.timestamp.isoformat()
                 }
                 for a in activities
@@ -246,8 +246,8 @@ async def create_user(
         audit_log = AuditLog(
             user_id=admin.id,
             action="user_created",
-            entity_type="user",
-            entity_id=new_user.id,
+            resource_type="user",
+            resource_id=str(new_user.id),
             details={"target_username": new_user.username},
             timestamp=datetime.utcnow()
         )
@@ -305,8 +305,8 @@ async def update_user(
         audit_log = AuditLog(
             user_id=admin.id,
             action="user_updated",
-            entity_type="user",
-            entity_id=user.id,
+            resource_type="user",
+            resource_id=str(user.id),
             details={"target_username": user.username, "changes": user_data.dict(exclude_unset=True)},
             timestamp=datetime.utcnow()
         )
@@ -358,8 +358,8 @@ async def reset_user_password(
         audit_log = AuditLog(
             user_id=admin.id,
             action="password_reset",
-            entity_type="user",
-            entity_id=user.id,
+            resource_type="user",
+            resource_id=str(user.id),
             details={"target_username": user.username},
             timestamp=datetime.utcnow()
         )
@@ -404,7 +404,18 @@ async def delete_user(
         if user.id == admin.id:
             raise HTTPException(status_code=400, detail="Cannot delete your own account")
         
-        # Handle projects
+        # Handle projects. Without this guard SQLAlchemy tries to null out
+        # projects.created_by on delete, which is NOT NULL, so deleting anyone
+        # who ever created a project failed with a 500.
+        owned_query = select(Project).where(Project.created_by == user_id)
+        owned = (await db.execute(owned_query)).scalars().all()
+        if owned and not transfer_projects_to:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"{user.username} still owns {len(owned)} project(s). "
+                        f"Pass transfer_projects_to=<user_id> to reassign them first.")
+            )
+
         if transfer_projects_to:
             # Transfer projects to another user
             projects_query = select(Project).where(Project.created_by == user_id)
@@ -420,8 +431,8 @@ async def delete_user(
         audit_log = AuditLog(
             user_id=admin.id,
             action="user_deleted",
-            entity_type="user",
-            entity_id=user.id,
+            resource_type="user",
+            resource_id=str(user.id),
             details={
                 "target_username": user.username,
                 "projects_transferred_to": transfer_projects_to

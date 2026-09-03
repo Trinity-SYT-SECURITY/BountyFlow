@@ -49,7 +49,21 @@ async def get_projects(
     company_filter: Optional[str] = None
 ):
     """Get all projects accessible to the current user"""
-    projects = await simple_database_service.get_projects()
+    from ..models.models import User
+
+    user_id = (current_user or {}).get("user_id")
+    username = (current_user or {}).get("username")
+    include_all = False
+
+    if user_id is None and username and username != "anonymous":
+        user_id = (await db.execute(
+            select(User.id).where(User.username == username))).scalar_one_or_none()
+    if user_id is not None:
+        include_all = bool((await db.execute(
+            select(User.is_superuser).where(User.id == user_id))).scalar_one_or_none())
+
+    projects = await simple_database_service.get_projects(
+        user_id=user_id, include_all=include_all)
     return projects
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -92,7 +106,7 @@ async def create_project(
                 project_id=project.get("id") if isinstance(project, dict) else project.id,
                 action="project_created",
                 resource_type="project",
-                entity_id=str(project.get("id") if isinstance(project, dict) else project.id),
+                resource_id=str(project.get("id") if isinstance(project, dict) else project.id),
                 details={
                     "project_name": project_data.name,
                     "company_name": project_data.company_name or ""
@@ -244,7 +258,7 @@ async def add_target(
                 project_id=project_id,
                 action="target_created",
                 resource_type="target",
-                entity_id=str(target_id),
+                resource_id=str(target_id),
                 details={
                     "target_type": target_data.target_type,
                     "target_value": target_data.target_value
@@ -300,7 +314,7 @@ async def add_finding(
                 project_id=project_id,
                 action="finding_submitted",
                 resource_type="finding",
-                entity_id=str(finding_id) if finding_id else None,
+                resource_id=str(finding_id) if finding_id else None,
                 details={
                     "title": finding_data.get("title"),
                     "severity": finding_data.get("severity", "info")
@@ -877,3 +891,123 @@ async def delete_discovered_user(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete discovered user: {str(e)}")
+
+
+@router.get("/{project_id}/export")
+async def export_project(
+    project_id: int,
+    format: str = "json",
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Download everything recorded against a project.
+
+    The Export page used to list three invented exports and a "Create Export"
+    button that pushed a row into React state; nothing was ever produced. This
+    is what that page needed: one request, one file.
+    """
+    import csv
+    import io
+    import json as _json
+
+    from fastapi.responses import Response
+    from ..models.models import DiscoveredFile, ToolExecution
+
+    project = (await db.execute(
+        select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    targets = (await db.execute(
+        select(Target).where(Target.project_id == project_id))).scalars().all()
+    findings = (await db.execute(
+        select(KnowledgeNode).where(
+            KnowledgeNode.project_id == project_id,
+            KnowledgeNode.node_type == "finding"))).scalars().all()
+    users = (await db.execute(
+        select(DiscoveredUser).where(
+            DiscoveredUser.project_id == project_id))).scalars().all()
+    files = (await db.execute(
+        select(DiscoveredFile).where(
+            DiscoveredFile.project_id == project_id))).scalars().all()
+    executions = (await db.execute(
+        select(ToolExecution).where(
+            ToolExecution.project_id == project_id))).scalars().all()
+
+    payload = {
+        "project": {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "company_name": project.company_name,
+            "status": project.status,
+            "target_scope": project.target_scope,
+            "out_of_scope": project.out_of_scope,
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+        },
+        "targets": [
+            {"id": t.id, "target_type": t.target_type, "target_value": t.target_value,
+             "status": t.status, "priority": t.priority, "notes": t.notes}
+            for t in targets
+        ],
+        "findings": [
+            {"id": f.id, "target_id": f.target_id, **(f.node_data or {})}
+            for f in findings
+        ],
+        "discovered_users": [
+            {"id": u.id, "target_id": u.target_id, "username": u.username,
+             "privilege_level": u.privilege_level, "source": u.source}
+            for u in users
+        ],
+        "discovered_files": [
+            {"id": f.id, "target_id": f.target_id, "filename": f.filename,
+             "file_path": f.file_path, "file_type": f.file_type,
+             "is_sensitive": f.is_sensitive}
+            for f in files
+        ],
+        "tool_executions": [
+            {"id": e.id, "tool_id": e.tool_id, "target_id": e.target_id,
+             "command_executed": e.command_executed,
+             "status": e.execution_status, "exit_code": e.exit_code,
+             "start_time": e.start_time.isoformat() if e.start_time else None}
+            for e in executions
+        ],
+        "exported_at": datetime.utcnow().isoformat(),
+    }
+
+    stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in project.name) or "project"
+
+    if format == "json":
+        return Response(
+            content=_json.dumps(payload, indent=2, default=str),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.json"'})
+
+    if format == "csv":
+        # One flat table, one row per record, so it opens in a spreadsheet.
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["section", "id", "name", "detail", "extra"])
+        for target in payload["targets"]:
+            writer.writerow(["target", target["id"], target["target_value"],
+                             target["target_type"], target["status"]])
+        for finding in payload["findings"]:
+            writer.writerow(["finding", finding.get("id"), finding.get("title", ""),
+                             finding.get("severity", ""), finding.get("description", "")])
+        for user in payload["discovered_users"]:
+            writer.writerow(["discovered_user", user["id"], user["username"],
+                             user["privilege_level"] or "", user["source"] or ""])
+        for f in payload["discovered_files"]:
+            writer.writerow(["discovered_file", f["id"], f["filename"],
+                             f["file_path"], f["file_type"] or ""])
+        for e in payload["tool_executions"]:
+            writer.writerow(["tool_execution", e["id"], e["command_executed"] or "",
+                             e["status"] or "", e["exit_code"]])
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.csv"'})
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported export format '{format}'. Use json or csv.")

@@ -79,8 +79,8 @@ async def update_security_settings(
         audit_log = AuditLog(
             user_id=admin.id,
             action="security_settings_updated",
-            entity_type="settings",
-            entity_id=0,
+            resource_type="settings",
+            resource_id=str(0),
             details=settings.dict(),
             timestamp=datetime.utcnow()
         )
@@ -126,8 +126,8 @@ async def update_email_settings(
         audit_log = AuditLog(
             user_id=admin.id,
             action="email_settings_updated",
-            entity_type="settings",
-            entity_id=0,
+            resource_type="settings",
+            resource_id=str(0),
             details=log_settings,
             timestamp=datetime.utcnow()
         )
@@ -165,8 +165,8 @@ async def update_system_settings(
         audit_log = AuditLog(
             user_id=admin.id,
             action="system_settings_updated",
-            entity_type="settings",
-            entity_id=0,
+            resource_type="settings",
+            resource_id=str(0),
             details=settings.dict(),
             timestamp=datetime.utcnow()
         )

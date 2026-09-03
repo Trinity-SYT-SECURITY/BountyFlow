@@ -2,6 +2,21 @@ import { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useToast } from '../components/Toast';
+import { attackFlowApi } from '../utils/attackFlows';
+
+const flowApi = attackFlowApi('attack-flows');
+
+// The canvas thinks in {operators, links}; the API stores the two halves
+// as `nodes` and `connections`. These two functions are the only place
+// that has to know both.
+const toRecord = (flowchart) => ({
+  nodes: flowchart?.operators || {},
+  connections: flowchart?.links || {}
+});
+const toFlowchart = (row) => ({
+  operators: row?.nodes || {},
+  links: row?.connections || {}
+});
 
 export default function AttackFlowBuilder() {
   const toast = useToast();
@@ -62,16 +77,9 @@ export default function AttackFlowBuilder() {
     try {
       setIsLoading(true);
       // Fetch attack flows from API
-      const response = await fetch(`http://localhost:8002/api/v1/attack-flows/${selectedProject.id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setAttackFlows(data);
-        if (data.length > 0) {
-          setCurrentFlow(data[0]);
-        }
-      } else {
-        setAttackFlows([]);
-      }
+      const data = await flowApi.list(selectedProject.id);
+      setAttackFlows(data);
+      setCurrentFlow(data.length > 0 ? data[0] : null);
     } catch (error) {
       console.error('Failed to load attack flows:', error);
       setAttackFlows([]);
@@ -84,10 +92,7 @@ export default function AttackFlowBuilder() {
     if (!canvasRef.current) return;
 
     // Initialize flowchart data
-    const data = currentFlow?.flowchartData || {
-      operators: {},
-      links: {}
-    };
+    const data = toFlowchart(currentFlow);
 
     setFlowchartData(data);
 
@@ -330,35 +335,57 @@ export default function AttackFlowBuilder() {
     setShowAddModal(true);
   };
 
-  const handleSaveFlow = () => {
-    if (!newFlowName.trim()) return;
-    
-    const newFlow = {
-      id: Math.max(...attackFlows.map(f => f.id), 0) + 1,
-      name: newFlowName,
-      description: 'New attack flow',
-      severity: severity,
-      plausibility: plausibility,
-      risk: risk,
-      flowchartData: { operators: {}, links: {} }
-    };
-    
-    setAttackFlows([...attackFlows, newFlow]);
-    setCurrentFlow(newFlow);
-    setShowAddModal(false);
-    setNewFlowName('');
-  };
+  const handleSaveFlow = async () => {
+    if (!newFlowName.trim() || !selectedProject) return;
 
-  const handleDeleteFlow = (flowId) => {
-    setAttackFlows(attackFlows.filter(f => f.id !== flowId));
-    if (currentFlow?.id === flowId) {
-      setCurrentFlow(attackFlows.length > 1 ? attackFlows[0] : null);
+    try {
+      const created = await flowApi.create(selectedProject.id, {
+        name: newFlowName,
+        description: 'New attack flow',
+        severity,
+        plausibility,
+        risk,
+        ...toRecord({ operators: {}, links: {} })
+      });
+      setAttackFlows([...attackFlows, created]);
+      setCurrentFlow(created);
+      setShowAddModal(false);
+      setNewFlowName('');
+    } catch (error) {
+      toast.error(`Could not create the attack flow: ${error.message}`);
     }
   };
 
-  const handleSaveChanges = () => {
-    // In a real implementation, save changes to backend
-    toast.success('Attack flow saved successfully!');
+  const handleDeleteFlow = async (flowId) => {
+    try {
+      await flowApi.remove(flowId);
+      const remaining = attackFlows.filter(f => f.id !== flowId);
+      setAttackFlows(remaining);
+      if (currentFlow?.id === flowId) {
+        setCurrentFlow(remaining.length > 0 ? remaining[0] : null);
+      }
+    } catch (error) {
+      toast.error(`Could not delete the attack flow: ${error.message}`);
+    }
+  };
+
+  const handleSaveChanges = async () => {
+    if (!currentFlow) return;
+    try {
+      const saved = await flowApi.update(currentFlow.id, {
+        name: currentFlow.name,
+        description: currentFlow.description,
+        severity: currentFlow.severity,
+        plausibility: currentFlow.plausibility,
+        risk: currentFlow.risk,
+        ...toRecord(flowchartData)
+      });
+      setAttackFlows(attackFlows.map(f => (f.id === saved.id ? saved : f)));
+      setCurrentFlow(saved);
+      toast.success('Attack flow saved successfully!');
+    } catch (error) {
+      toast.error(`Could not save the attack flow: ${error.message}`);
+    }
   };
 
   const handleAddOperator = (template) => {

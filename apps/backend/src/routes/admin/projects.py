@@ -130,8 +130,8 @@ async def transfer_project_ownership(
         audit_log = AuditLog(
             user_id=admin.id,
             action="project_ownership_transferred",
-            entity_type="project",
-            entity_id=project.id,
+            resource_type="project",
+            resource_id=str(project.id),
             details={
                 "project_name": project.name,
                 "old_owner_id": old_owner_id,
@@ -180,8 +180,8 @@ async def delete_project_admin(
         audit_log = AuditLog(
             user_id=admin.id,
             action="project_deleted_by_admin",
-            entity_type="project",
-            entity_id=project.id,
+            resource_type="project",
+            resource_id=str(project.id),
             details={
                 "project_name": project_name,
                 "original_owner_id": project_owner
