@@ -84,6 +84,10 @@ async def lifespan(app: FastAPI):
             ("targets", "scan_results", "TEXT"),
             ("users", "reset_token", "VARCHAR(64)"),
             ("users", "reset_token_expires", "DATETIME"),
+            ("targets", "assigned_to", "INTEGER"),
+            ("project_users", "role", "VARCHAR(20) DEFAULT 'editor'"),
+            ("project_users", "assigned_by", "INTEGER"),
+            ("project_users", "assigned_at", "DATETIME"),
         ]
         for table, column, col_type in migrations:
             try:
@@ -101,6 +105,26 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("✅ Schema migrations complete")
+
+    # Every project's creator is an owner of it. Membership was a table nothing
+    # ever wrote to, so without this backfill every project that existed before
+    # roles landed would have no owner and nobody able to invite anyone.
+    try:
+        from sqlalchemy import text as _text
+        async with engine.begin() as conn:
+            await conn.execute(_text("""
+                INSERT OR IGNORE INTO project_users (project_id, user_id, role)
+                SELECT id, created_by, 'owner' FROM projects
+                WHERE created_by IS NOT NULL
+            """))
+            await conn.execute(_text("""
+                UPDATE project_users SET role = 'owner'
+                WHERE (project_id, user_id) IN (
+                    SELECT id, created_by FROM projects WHERE created_by IS NOT NULL)
+            """))
+        logger.info("Project owners backfilled")
+    except Exception as e:
+        logger.warning(f"Could not backfill project owners: {e}")
 
     # Initialize default users (admin and test_user)
     # This will create default users if they don't exist

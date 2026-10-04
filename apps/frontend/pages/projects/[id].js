@@ -5,6 +5,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useToast } from '../../components/Toast';
 import { useModal } from '../../components/Modal';
+import TeamPanel from '../../components/TeamPanel';
 
 // Dynamically import Terminal component with SSR disabled (xterm.js requires browser environment)
 const Terminal = dynamic(() => import('../../components/Terminal'), {
@@ -22,6 +23,10 @@ export default function ProjectDetail() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
+  // Who is looking. The team panel needs it to decide whether to offer
+  // the member controls, and the targets tab to label "me".
+  const [currentUser, setCurrentUser] = useState(null);
+  const [projectMembers, setProjectMembers] = useState([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [newItem, setNewItem] = useState({});
@@ -872,6 +877,48 @@ export default function ProjectDetail() {
 
   // Reload execution history when switching to tools tab
   useEffect(() => {
+    fetch('http://localhost:8002/api/v1/auth/me')
+      .then(r => (r.ok ? r.json() : null))
+      .then(setCurrentUser)
+      .catch(() => setCurrentUser(null));
+  }, []);
+
+  /* Claiming a target is how two people avoid working the same host: the
+     assignee is visible to everyone on the project. */
+  const handleClaimTarget = async (target, userId) => {
+    try {
+      const response = await fetch(
+        `http://localhost:8002/api/v1/projects/${id}/targets/${target.id}/assignee`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assigned_to: userId || null }),
+        });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        toast.error(detail.detail || 'Could not change the assignee');
+        return;
+      }
+      setProject(prev => (prev ? {
+        ...prev,
+        targets: (prev.targets || []).map(t => (
+          t.id === target.id ? { ...t, assigned_to: userId || null } : t)),
+      } : prev));
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
+  const loadMembers = () => {
+    if (!id) return;
+    fetch(`http://localhost:8002/api/v1/projects/${id}/members`)
+      .then(r => (r.ok ? r.json() : { members: [] }))
+      .then(data => setProjectMembers(data.members || []))
+      .catch(() => setProjectMembers([]));
+  };
+
+  useEffect(() => { loadMembers(); }, [id]);
+
+  useEffect(() => {
     if (id && activeTab === 'tools') {
       loadExecutionHistory();
     }
@@ -1343,7 +1390,8 @@ export default function ProjectDetail() {
               { id: 'files', label: 'Discovered Files' },
               { id: 'findings', label: 'Findings' },
               { id: 'tools', label: 'Tools' },
-              { id: 'reports', label: 'Reports' }
+              { id: 'reports', label: 'Reports' },
+              { id: 'team', label: 'Team' }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1363,6 +1411,13 @@ export default function ProjectDetail() {
 
       {/* Content */}
       <div className="p-6">
+        {activeTab === 'team' && (
+          <div className="max-w-4xl">
+            <TeamPanel projectId={id} currentUser={currentUser}
+                       onChange={loadMembers} />
+          </div>
+        )}
+
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Project Info */}
@@ -1449,6 +1504,7 @@ export default function ProjectDetail() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Target</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Type</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Assigned To</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Last Scan</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Actions</th>
                   </tr>
@@ -1468,6 +1524,23 @@ export default function ProjectDetail() {
                         <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(target.status)}`}>
                           {target.status}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <select
+                          value={target.assigned_to || ''}
+                          onChange={(e) => handleClaimTarget(
+                            target, e.target.value ? parseInt(e.target.value) : null)}
+                          className="bg-gray-900 text-white text-xs px-2 py-1 rounded border border-gray-600"
+                          title="Who is working on this target"
+                        >
+                          <option value="">unclaimed</option>
+                          {projectMembers.map(m => (
+                            <option key={m.user_id} value={m.user_id}>
+                              {m.username}
+                              {currentUser && m.user_id === currentUser.id ? ' (me)' : ''}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                         {(() => {

@@ -153,6 +153,12 @@ export default function AdminDashboard() {
             >
               📁 Projects
             </Link>
+            <Link
+              href="/admin/overview"
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              🧭 All Projects
+            </Link>
             <Link 
               href="/admin/audit-logs"
               className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-medium transition-colors"

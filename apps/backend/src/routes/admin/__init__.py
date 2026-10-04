@@ -11,6 +11,7 @@ from .projects import router as projects_router
 from .audit_logs import router as audit_logs_router
 from .dashboard import router as dashboard_router
 from .settings import router as settings_router
+from .oversight import router as oversight_router
 
 # Create main admin router
 router = APIRouter()
@@ -21,6 +22,9 @@ router.include_router(users_router, prefix="/users", tags=["admin-users"])
 router.include_router(projects_router, prefix="/projects", tags=["admin-projects"])
 router.include_router(audit_logs_router, prefix="/audit-logs", tags=["admin-audit"])
 router.include_router(settings_router, prefix="/settings", tags=["admin-settings"])
+# Cross-project visibility and membership control: the parts of the console
+# that exist because a superuser is on no project and may see them all.
+router.include_router(oversight_router, tags=["admin-oversight"])
 
 __all__ = ["router"]
 

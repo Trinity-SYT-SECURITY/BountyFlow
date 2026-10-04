@@ -10,11 +10,28 @@ from datetime import datetime
 from .database import Base
 
 # Association table for many-to-many relationships
+# Who is on a project, and what they may do there.
+#
+# This was a bare join table and nothing ever inserted into it, so "membership"
+# existed in the schema and nowhere else. It now carries the role, which is what
+# lets one tester put three others on an engagement without handing them the
+# ability to delete it.
+#
+#   owner   - everything, including managing members and deleting the project
+#   editor  - all normal testing work: targets, findings, tools, reports
+#   viewer  - read only
+#
+# A superuser overrides all three; the project's creator is always an owner.
+PROJECT_ROLES = ("owner", "editor", "viewer")
+
 project_users = Table(
     "project_users",
     Base.metadata,
     Column("project_id", Integer, ForeignKey("projects.id"), primary_key=True),
     Column("user_id", Integer, ForeignKey("users.id"), primary_key=True),
+    Column("role", String(20), nullable=False, server_default="editor"),
+    Column("assigned_by", Integer, ForeignKey("users.id"), nullable=True),
+    Column("assigned_at", DateTime, server_default=func.now()),
 )
 
 tool_dependencies = Table(
@@ -43,8 +60,12 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationships
+    # project_users now has two columns pointing at users (the member and who
+    # put them there), so the join has to say which one is the membership.
     projects: Mapped[List["Project"]] = relationship(
-        "Project", secondary=project_users, back_populates="users"
+        "Project", secondary=project_users, back_populates="users",
+        primaryjoin=lambda: User.id == project_users.c.user_id,
+        secondaryjoin=lambda: Project.id == project_users.c.project_id,
     )
     created_projects: Mapped[List["Project"]] = relationship(
         "Project", back_populates="created_by_user"
@@ -76,7 +97,9 @@ class Project(Base):
     # Relationships
     created_by_user: Mapped["User"] = relationship("User", back_populates="created_projects")
     users: Mapped[List["User"]] = relationship(
-        "User", secondary=project_users, back_populates="projects"
+        "User", secondary=project_users, back_populates="projects",
+        primaryjoin=lambda: Project.id == project_users.c.project_id,
+        secondaryjoin=lambda: User.id == project_users.c.user_id,
     )
     targets: Mapped[List["Target"]] = relationship("Target", back_populates="project")
     tool_executions: Mapped[List["ToolExecution"]] = relationship(
@@ -105,6 +128,9 @@ class Target(Base):
     priority: Mapped[int] = mapped_column(Integer, default=1)
     notes: Mapped[Optional[str]] = mapped_column(Text)
     scan_results: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)  # Structured scan data
+    # Who on the team has taken this one. Two people working the same host
+    # without knowing it is the failure this is here to prevent.
+    assigned_to: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -472,3 +498,27 @@ class AttackFlow(Base):
         DateTime, server_default=func.now(), onupdate=func.now())
 
     project: Mapped["Project"] = relationship("Project")
+
+
+class ApiKey(Base):
+    """A long-lived credential for a person, used by tooling rather than a browser.
+
+    The MCP server authenticates with one of these. Only the hash is stored, so
+    a key is shown once when it is minted and never again. Every request made
+    with it resolves to the user who owns it, which means project access and the
+    audit trail work exactly as they do for a session token.
+    """
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    # First characters of the key, so a person can tell two of them apart.
+    prefix: Mapped[str] = mapped_column(String(16), index=True)
+    key_hash: Mapped[str] = mapped_column(String(128), index=True)
+    scopes: Mapped[Optional[str]] = mapped_column(String(200))
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User"] = relationship("User")

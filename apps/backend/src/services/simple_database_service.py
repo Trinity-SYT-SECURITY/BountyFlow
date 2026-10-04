@@ -836,7 +836,33 @@ class SimpleDatabaseService:
                     )
                 )
                 
-                # 8. Finally delete the project
+                # 8. Everything else that hangs off the project.
+                #
+                # project_users in particular: without this the membership rows
+                # outlive the project, and because SQLite reuses row ids, the
+                # next project created can be handed a previous project's team.
+                # That was found by a test whose brand new project already had
+                # two members on it.
+                from ..models.models import (
+                    ActivityLog, AttackFlow, AuditLog, Report, project_users)
+
+                await session.execute(
+                    delete(project_users).where(
+                        project_users.c.project_id == project_id))
+                await session.execute(
+                    delete(AttackFlow).where(AttackFlow.project_id == project_id))
+                await session.execute(
+                    delete(Report).where(Report.project_id == project_id))
+                await session.execute(
+                    delete(ActivityLog).where(ActivityLog.project_id == project_id))
+
+                # The audit trail outlives what it describes, so those rows stay
+                # and only lose their now-dangling project reference.
+                await session.execute(
+                    update(AuditLog).where(AuditLog.project_id == project_id)
+                    .values(project_id=None))
+
+                # 9. Finally delete the project
                 result = await session.execute(
                     delete(Project).where(Project.id == project_id)
                 )

@@ -160,6 +160,23 @@ export default function Layout({ children, title = "BountyFlow" }) {
             </div>
           </div>
           <div className="flex items-center space-x-3">
+            {/* Search: the fastest route to "which project was that host in",
+                from wherever you happen to be. */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const q = e.target.elements.q.value.trim();
+                if (q) router.push(`/search?q=${encodeURIComponent(q)}`);
+              }}
+              className="hidden md:block"
+            >
+              <input
+                name="q"
+                placeholder="Search everything..."
+                className="bg-gray-700 text-gray-200 text-xs px-3 py-1.5 rounded border border-gray-600 focus:border-blue-500 focus:outline-none w-56"
+              />
+            </form>
+
             {/* AI Provider Selector */}
             {availableProviders.length > 0 && (
               <div className="flex items-center space-x-1.5">
@@ -224,6 +241,34 @@ export default function Layout({ children, title = "BountyFlow" }) {
               >
                 <i className={`fas fa-tachometer-alt ${sidebarCollapsed ? '' : 'mr-3'} w-4`}></i>
                 {!sidebarCollapsed && <span>Dashboard</span>}
+              </Link>
+
+              {/* Where you start rather than another page of records: one
+                  search across every engagement, and what is waiting on you. */}
+              <Link
+                href="/search"
+                className={`flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'px-3'} py-2 rounded-lg transition-colors ${
+                  isActive('/search')
+                    ? 'text-white bg-blue-600'
+                    : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                }`}
+                title={sidebarCollapsed ? "Search" : ""}
+              >
+                <i className={`fas fa-magnifying-glass ${sidebarCollapsed ? '' : 'mr-3'} w-4`}></i>
+                {!sidebarCollapsed && <span>Search</span>}
+              </Link>
+
+              <Link
+                href="/my-work"
+                className={`flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'px-3'} py-2 rounded-lg transition-colors ${
+                  isActive('/my-work')
+                    ? 'text-white bg-blue-600'
+                    : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                }`}
+                title={sidebarCollapsed ? "My Work" : ""}
+              >
+                <i className={`fas fa-list-check ${sidebarCollapsed ? '' : 'mr-3'} w-4`}></i>
+                {!sidebarCollapsed && <span>My Work</span>}
               </Link>
 
               <Link 
@@ -388,6 +433,19 @@ export default function Layout({ children, title = "BountyFlow" }) {
               >
                 <i className={`fas fa-file-alt ${sidebarCollapsed ? '' : 'mr-3'} w-4`}></i>
                 {!sidebarCollapsed && <span>Reports</span>}
+              </Link>
+
+              <Link
+                href="/settings"
+                className={`flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'px-3'} py-2 rounded-lg transition-colors ${
+                  isActive('/settings')
+                    ? 'text-white bg-blue-600'
+                    : 'text-gray-300 hover:text-white hover:bg-gray-700'
+                }`}
+                title={sidebarCollapsed ? "Settings and API keys" : ""}
+              >
+                <i className={`fas fa-key ${sidebarCollapsed ? '' : 'mr-3'} w-4`}></i>
+                {!sidebarCollapsed && <span>Settings</span>}
               </Link>
 
               <Link 

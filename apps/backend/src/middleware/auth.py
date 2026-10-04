@@ -106,24 +106,82 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify JWT token"""
+# ---------------------------------------------------------------- API keys
+# Tooling — the MCP server in particular — needs a credential that does not
+# expire every thirty minutes and can be revoked without changing a password.
+# An API key is issued to a person, so everything done with it is attributed to
+# them: project roles and the audit trail work exactly as they do in a browser.
+API_KEY_PREFIX = "bf_"
+
+
+def generate_api_key() -> tuple:
+    """Returns (raw_key, prefix, hash). The raw key is shown once and not stored."""
+    import hashlib
+
+    raw = API_KEY_PREFIX + secrets.token_urlsafe(32)
+    return raw, raw[:12], hashlib.sha256(raw.encode()).hexdigest()
+
+
+def hash_api_key(raw: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def resolve_api_key(raw: str) -> Optional[dict]:
+    """The account this key belongs to, or None if it is unknown or revoked."""
+    from sqlalchemy import select, update
+
+    from ..models.database import async_session
+    from ..models.models import ApiKey, User
+
     try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return {"username": username, "user_id": payload.get("user_id")}
-    except JWTError:
+        async with async_session() as db:
+            row = (await db.execute(
+                select(ApiKey).where(
+                    ApiKey.key_hash == hash_api_key(raw),
+                    ApiKey.revoked_at.is_(None)))).scalar_one_or_none()
+            if row is None:
+                return None
+
+            user = (await db.execute(
+                select(User).where(User.id == row.user_id))).scalar_one_or_none()
+            if user is None or not user.is_active:
+                return None
+
+            # Last used is what makes an unused key easy to spot and revoke.
+            await db.execute(
+                update(ApiKey).where(ApiKey.id == row.id).values(
+                    last_used_at=datetime.utcnow()))
+            await db.commit()
+
+            return {"username": user.username, "user_id": user.id, "via": "api_key"}
+    except Exception:
+        return None
+
+
+async def resolve_credential(credential: str) -> Optional[dict]:
+    """Whichever of the two credential types this is."""
+    if credential.startswith(API_KEY_PREFIX):
+        return await resolve_api_key(credential)
+    try:
+        payload = jwt.decode(credential, SECRET_KEY, algorithms=[ALGORITHM])
+    except (JWTError, Exception):
+        return None
+    if payload.get("sub") is None:
+        return None
+    return {"username": payload.get("sub"), "user_id": payload.get("user_id")}
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Resolve the caller from a session token or an API key."""
+    caller = await resolve_credential(credentials.credentials)
+    if caller is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return caller
 
 def _require_auth_enabled() -> bool:
     """REQUIRE_AUTH=true turns every 'optional' dependency into a hard one.
@@ -137,9 +195,11 @@ def _require_auth_enabled() -> bool:
     return os.getenv("REQUIRE_AUTH", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
-def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))):
-    """Get current authenticated user (optional) - returns anonymous if no token,
-    unless REQUIRE_AUTH is set, in which case a valid token is mandatory."""
+async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))):
+    """Get current authenticated user (optional) - returns anonymous if no
+    credential, unless REQUIRE_AUTH is set, in which case one is mandatory.
+
+    Accepts a session token or an API key."""
     strict = _require_auth_enabled()
     if credentials is None:
         if strict:
@@ -149,19 +209,17 @@ def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials
                 headers={"WWW-Authenticate": "Bearer"},
             )
         return {"username": "anonymous", "user_id": None}
-    try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        return {"username": username, "user_id": payload.get("user_id")}
-    except (JWTError, Exception):
-        if strict:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        # If token is invalid, return anonymous user
-        return {"username": "anonymous", "user_id": None}
+
+    caller = await resolve_credential(credentials.credentials)
+    if caller is not None:
+        return caller
+    if strict:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired credential",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return {"username": "anonymous", "user_id": None}
 
 def get_current_user(current_user: dict = Depends(verify_token)):
     """Get current authenticated user"""

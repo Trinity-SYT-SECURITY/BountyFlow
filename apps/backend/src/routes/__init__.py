@@ -18,6 +18,9 @@ from .reports import router as reports_router
 from .activity_logs import router as activity_logs_router
 from .integrations import router as integrations_router
 from .attack_flows import build_router as build_attack_router, KINDS as ATTACK_KINDS
+from .members import router as members_router
+from .search import router as search_router
+from .api_keys import router as api_keys_router
 
 api_router = APIRouter()
 
@@ -108,6 +111,26 @@ api_router.include_router(
 api_router.include_router(
     integrations_router,
     tags=["integrations", "external-tools"]
+)
+
+# Membership, assignment and the team view. No prefix: these hang off
+# /projects/{id}/... alongside the project's own routes, which is also what
+# makes the project-access middleware cover them without a new pattern.
+api_router.include_router(
+    members_router,
+    tags=["collaboration", "members"]
+)
+
+# Search spans projects, so it sits at the top level and scopes itself.
+api_router.include_router(
+    search_router,
+    tags=["search"]
+)
+
+api_router.include_router(
+    api_keys_router,
+    prefix="/auth",
+    tags=["authentication", "api-keys"]
 )
 
 # The three builder pages each call their own prefix; they store the same

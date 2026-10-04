@@ -1,10 +1,8 @@
 # 🚀 BountyFlow
 
-## **Professional Penetration Testing Management Platform**
-
 ![BountyFlow Platform](icon/bountyflow-full.gif)
 
-BountyFlow is a comprehensive platform designed for penetration testers and cybersecurity researchers, providing complete test workflow management from target identification to report generation.
+BountyFlow is a comprehensive platform designed for penetration testers or red teamers or bug hunters, providing complete test workflow management from target identification to report generation.
 
 ## Demo
 
@@ -20,7 +18,7 @@ BountyFlow has been accepted for presentation at **three** international cyberse
 
 | Conference | Session | Topic |
 |------------|---------|-------|
-| **[Black Hat Arsenal](https://blackhat.com/sector/arsenal/schedule/index.html#bountyflow-an-automated-knowledge-graph-driven-penetration-testing-management-platform-54561)** (SecTor 2026) | Arsenal Tool Demo | BountyFlow: An Automated Knowledge Graph-Driven Penetration Testing Management Platform |
+| **[Black Hat SecTor Arsenal](https://blackhat.com/sector/arsenal/schedule/index.html#bountyflow-an-automated-knowledge-graph-driven-penetration-testing-management-platform-54561)** (SecTor 2026) | Arsenal Tool Demo | BountyFlow: An Automated Knowledge Graph-Driven Penetration Testing Management Platform |
 | **[ROOTCON 20](https://www.rootcon.org/html/rc20/talks#ctrl-flow-esc-escaping-red-team-chaos)** | Track 1 Talk | *Ctrl + Flow + Esc: Escaping Red Team Chaos* |
 | **[.HACK 2026](https://dothack.io/session/tech02)** | TECH Session | AI-driven Red Team Operations: Overcoming Tool Fragmentation for Attack Chain Efficiency & Collaborative Insights |
 
@@ -52,6 +50,9 @@ BountyFlow has been accepted for presentation at **three** international cyberse
 | 🕵️‍♂️ **Forensics Mode** | Detailed activity logs and AI interactions tracking |
 | 📋 **Reports** | Auto-generate professional test reports |
 | 🛡️ **Audit Logs** | System-wide audit trail for team accountability |
+| 👥 **Team Collaboration** | Assign an engagement to several testers, with owner / editor / viewer roles |
+| 🔎 **Search** | One query across every project — targets, findings, credentials, files, tool output, reports |
+| 🔌 **MCP Server** | Let a model read your engagements and record what it finds |
 
 ## 🚀 Quick Start
 
@@ -174,6 +175,62 @@ python start.py
 1. Go to **Reports** → Click **"Generate Report"**
 2. AI analyzes all project data
 3. Download PDF/HTML/Markdown report
+
+## 👥 Working as a Team
+
+An engagement belongs to whoever created it. To bring others in, open the
+project and use the **Team** tab:
+
+| Role | Can |
+|------|-----|
+| **Owner** | Everything, including managing the team and deleting the project |
+| **Editor** | All the testing work: targets, findings, tools, reports |
+| **Viewer** | Read only |
+
+Assigning three people at once is one action. Everyone on a project sees all of
+it — the same targets, findings, credentials, graph and reports — and each
+target can be **claimed**, so nobody repeats work someone else has already
+taken. The Team tab shows who has claimed what, how many tool runs and findings
+each person has recorded, and how many targets nobody has picked up.
+
+**My Work** lists every project you are on and what is waiting on you across
+all of them. The full model — roles, where the check lives, what the
+administrator gets — is in [docs/COLLABORATION.md](docs/COLLABORATION.md).
+
+An administrator is on no project and can see them all: **Admin → All Projects**
+gives every engagement with its team and progress, who is free, and the ability
+to put anyone on anything.
+
+## 🔎 Search
+
+Three hundred projects and you cannot remember which one that host was in. The
+search box in the header, or the **Search** page, runs one query across
+everything you have access to: project and target names, finding titles and
+descriptions, discovered usernames and file paths, tool commands and their
+**output**, and report bodies. Narrow it by type, project, severity, status,
+target type, assignee or date range.
+
+Only the projects you can see are searched, so it never becomes a way around
+the access rules.
+
+## 🔌 MCP Server
+
+`mcp/` is an MCP server that puts an engagement in front of a model: scope,
+targets, findings, credentials, tool output, the knowledge graph, who is
+working on what. It can record targets, findings and notes; it cannot run tools
+or delete anything.
+
+```bash
+pip install -r mcp/requirements.txt
+claude mcp add bountyflow \
+  --env BOUNTYFLOW_URL=http://localhost:8002 \
+  --env BOUNTYFLOW_API_KEY=bf_your_key \
+  -- python mcp/bountyflow_mcp.py
+```
+
+Create the key under **Settings → API keys**. It acts as you: the projects you
+can see are the projects it can see, and everything it does is in the audit log
+under your name. See [mcp/README.md](mcp/README.md).
 
 ## 🤖 AI Model Configuration
 
